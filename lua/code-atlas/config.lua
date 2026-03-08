@@ -25,6 +25,13 @@ M.defaults = {
     max_height = 0.8,
     mode = "tree",
   },
+  architecture = {
+    include_tests = false,
+    unknown_layer_policy = "allow",
+    max_violation_examples = 3,
+    export_format = "json",
+    export_pretty = true,
+  },
 }
 
 M.options = vim.deepcopy(M.defaults)

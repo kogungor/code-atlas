@@ -17,6 +17,7 @@ It combines Tree-sitter parsing with project indexing to answer questions like:
 - File import graph and reverse import graph
 - Dead code report (zero incoming callers)
 - Impact analysis report (direct + transitive callers)
+- Architecture dependency report with layer violation checks
 - Optional Telescope picker integration (`:CodeAtlasPick`)
 
 ## Requirements
@@ -63,6 +64,7 @@ Local development with `lazy.nvim`:
 - `:CodeAtlasImpact` impact analysis for function under cursor
 - `:CodeAtlasExport [format] [path] [incoming|outgoing] [depth=N] [layout=hierarchical|force]` export project graph for symbol under cursor
 - `:CodeAtlasKnowledge [path|path=...] [format=json|jsonl] [include_tests=bool] [include_imports=bool] [include_types=bool] [include_external=bool]` build unified knowledge graph summary and optional snapshot
+- `:CodeAtlasArchitecture [include_tests=bool] [unknown_policy=allow|deny] [max_examples=N] [path=...] [format=json] [pretty=bool]` build architecture layer/domain report, dependency-rule violations, and optional JSON snapshot
 - `:CodeAtlasUI tree|ascii` switch UI mode
 
 ## Main Configuration
@@ -90,6 +92,13 @@ require("code-atlas").setup({
     max_width = 0.8,     -- max window width ratio
     max_height = 0.8,    -- max window height ratio
   },
+  architecture = {
+    include_tests = false,
+    unknown_layer_policy = "allow", -- "allow" | "deny"
+    max_violation_examples = 3,
+    export_format = "json",
+    export_pretty = true,
+  },
 })
 ```
 
@@ -103,6 +112,7 @@ require("code-atlas").setup({
 - Receiver-aware heuristics now also include Python/Go/Rust patterns (best-effort)
 - Project graph now shows mixed-source resolution preview (`index`, `lsp`, `mixed(index+lsp)`) with confidence labels when available
 - Project graph now annotates polymorphic/dynamic call edges and alternative targets
+- Architecture report uses heuristic layer inference and default dependency rules; tune with command flags as needed
 - Language coverage is best-effort and parser/query dependent
 - Large projects may need further performance guardrails/caching improvements
 

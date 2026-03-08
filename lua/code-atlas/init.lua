@@ -924,6 +924,134 @@ function M.run_knowledge_graph(opts)
   return graph, nil
 end
 
+local function parse_bool(value)
+  if value == nil then
+    return nil
+  end
+  local text = tostring(value):lower()
+  if text == "1" or text == "true" or text == "yes" or text == "on" then
+    return true
+  end
+  if text == "0" or text == "false" or text == "no" or text == "off" then
+    return false
+  end
+  return nil
+end
+
+local function parse_architecture_args(raw_args)
+  local out = {
+    include_tests = nil,
+    unknown_layer_policy = nil,
+    max_violation_examples = nil,
+    snapshot_path = nil,
+    snapshot_format = nil,
+    snapshot_pretty = nil,
+  }
+
+  for _, token in ipairs(raw_args or {}) do
+    local key, value = token:match("^([%w_]+)=(.+)$")
+    if key then
+      key = key:lower()
+
+      if key == "include_tests" then
+        local parsed = parse_bool(value)
+        if parsed == nil then
+          return nil, "include_tests must be true/false"
+        end
+        out.include_tests = parsed
+      elseif key == "unknown_policy" then
+        value = tostring(value):lower()
+        if value ~= "allow" and value ~= "deny" then
+          return nil, "unknown_policy must be allow or deny"
+        end
+        out.unknown_layer_policy = value
+      elseif key == "max_examples" then
+        local n = tonumber(value)
+        if not n or n < 1 then
+          return nil, "max_examples must be a positive number"
+        end
+        out.max_violation_examples = math.floor(n)
+      elseif key == "path" then
+        out.snapshot_path = value
+      elseif key == "format" then
+        local format = tostring(value):lower()
+        if format ~= "json" then
+          return nil, "format must be json"
+        end
+        out.snapshot_format = format
+      elseif key == "pretty" then
+        local parsed = parse_bool(value)
+        if parsed == nil then
+          return nil, "pretty must be true/false"
+        end
+        out.snapshot_pretty = parsed
+      else
+        return nil, "unknown option: " .. tostring(key)
+      end
+    else
+      if not out.snapshot_path then
+        out.snapshot_path = token
+      else
+        return nil, "unexpected argument: " .. tostring(token)
+      end
+    end
+  end
+
+  return out, nil
+end
+
+function M.run_architecture_graph(opts)
+  opts = opts or {}
+  local index_mod = require("code-atlas.index")
+  local analysis = require("code-atlas.analysis")
+  local render = require("code-atlas.render")
+  local window = require("code-atlas.window")
+  local config = require("code-atlas.config").get()
+
+  opts = vim.tbl_deep_extend("force", vim.deepcopy(config.architecture or {}), opts)
+
+  local index = index_mod.get()
+  if not index then
+    index = M.build_project_index({ root = vim.fn.getcwd() })
+  end
+  if not index then
+    vim.notify("code-atlas: project index is unavailable", vim.log.levels.ERROR)
+    return nil, "project index unavailable"
+  end
+
+  local report, err = analysis.architecture_report(index, opts)
+  if not report then
+    vim.notify("code-atlas: architecture analysis failed: " .. tostring(err), vim.log.levels.ERROR)
+    return nil, err
+  end
+
+  local snapshot_path = opts.snapshot_path
+  if snapshot_path and snapshot_path ~= "" then
+    local write_result, write_err = analysis.write_architecture_report(vim.fs.normalize(snapshot_path), report, {
+      format = opts.snapshot_format or opts.export_format,
+      pretty = opts.snapshot_pretty ~= nil and opts.snapshot_pretty or opts.export_pretty,
+    })
+    if not write_result then
+      vim.notify("code-atlas: architecture snapshot failed: " .. tostring(write_err), vim.log.levels.ERROR)
+      return nil, write_err
+    end
+    vim.notify(
+      string.format("code-atlas: architecture snapshot written to %s (%s)", write_result.path, write_result.format),
+      vim.log.levels.INFO
+    )
+  end
+
+  local doc = render.architecture_graph_document(report)
+  window.open(doc.lines, {
+    title = " code-atlas architecture graph ",
+    source_win = vim.api.nvim_get_current_win(),
+    source_buf = vim.api.nvim_get_current_buf(),
+    line_actions = doc.line_actions,
+  })
+
+  return report, nil
+end
+
 function M.set_ui_mode(mode)
   mode = (mode or ""):lower()
   if mode ~= "tree" and mode ~= "ascii" then
@@ -1103,6 +1231,31 @@ function M.create_user_commands()
       }
     end,
     desc = "Build knowledge graph summary and optional snapshot",
+  })
+
+  vim.api.nvim_create_user_command("CodeAtlasArchitecture", function(args)
+    local parsed, parse_err = parse_architecture_args(args.fargs)
+    if not parsed then
+      vim.notify("code-atlas: architecture args invalid: " .. tostring(parse_err), vim.log.levels.ERROR)
+      return
+    end
+    M.run_architecture_graph(parsed)
+  end, {
+    nargs = "*",
+    complete = function()
+      return {
+        "include_tests=true",
+        "include_tests=false",
+        "unknown_policy=allow",
+        "unknown_policy=deny",
+        "max_examples=3",
+        "path=",
+        "format=json",
+        "pretty=true",
+        "pretty=false",
+      }
+    end,
+    desc = "Show architecture layer dependency report and violations",
   })
 
   vim.api.nvim_create_user_command("CodeAtlasUI", function(args)
