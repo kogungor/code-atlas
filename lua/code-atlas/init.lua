@@ -868,6 +868,62 @@ function M.run_graph_export(raw_args)
   return result, nil
 end
 
+function M.run_knowledge_graph(opts)
+  opts = opts or {}
+  local index_mod = require("code-atlas.index")
+  local knowledge = require("code-atlas.knowledge")
+  local render = require("code-atlas.render")
+  local window = require("code-atlas.window")
+
+  local index = index_mod.get()
+  if not index then
+    index = M.build_project_index({ root = vim.fn.getcwd() })
+  end
+  if not index then
+    vim.notify("code-atlas: project index is unavailable", vim.log.levels.ERROR)
+    return nil, "project index unavailable"
+  end
+
+  local build_opts = {
+    include_tests = opts.include_tests,
+    include_imports = opts.include_imports,
+    include_external = opts.include_external,
+    include_types = opts.include_types,
+  }
+
+  local graph, graph_err = knowledge.build(index, build_opts)
+  if not graph then
+    vim.notify("code-atlas: knowledge graph failed: " .. tostring(graph_err), vim.log.levels.ERROR)
+    return nil, graph_err
+  end
+
+  local snapshot_path = opts.snapshot_path
+  if snapshot_path and snapshot_path ~= "" then
+    local write_result, write_err = knowledge.write_snapshot(vim.fs.normalize(snapshot_path), graph, {
+      format = opts.snapshot_format,
+      pretty = opts.snapshot_pretty,
+    })
+    if not write_result then
+      vim.notify("code-atlas: knowledge snapshot failed: " .. tostring(write_err), vim.log.levels.ERROR)
+      return nil, write_err
+    end
+    vim.notify(
+      string.format("code-atlas: knowledge snapshot written to %s (%s)", write_result.path, write_result.format or "json"),
+      vim.log.levels.INFO
+    )
+  end
+
+  local doc = render.knowledge_graph_document(graph)
+  window.open(doc.lines, {
+    title = " code-atlas knowledge graph ",
+    source_win = vim.api.nvim_get_current_win(),
+    source_buf = vim.api.nvim_get_current_buf(),
+    line_actions = doc.line_actions,
+  })
+
+  return graph, nil
+end
+
 function M.set_ui_mode(mode)
   mode = (mode or ""):lower()
   if mode ~= "tree" and mode ~= "ascii" then
@@ -992,6 +1048,61 @@ function M.create_user_commands()
       return { "path=", "direction=outgoing", "direction=incoming", "depth=", "layout=hierarchical", "layout=force" }
     end,
     desc = "Export project graph (json|graphviz|mermaid)",
+  })
+
+  vim.api.nvim_create_user_command("CodeAtlasKnowledge", function(args)
+    local parsed = {
+      snapshot_path = nil,
+      snapshot_format = nil,
+      snapshot_pretty = nil,
+      include_tests = nil,
+      include_imports = nil,
+      include_external = nil,
+      include_types = nil,
+    }
+    for _, token in ipairs(args.fargs or {}) do
+      local key, value = token:match("^([%w_]+)=(.+)$")
+      if key then
+        key = key:lower()
+        if key == "path" then
+          parsed.snapshot_path = value
+        elseif key == "format" then
+          parsed.snapshot_format = value
+        elseif key == "pretty" then
+          parsed.snapshot_pretty = value
+        elseif key == "include_tests" then
+          parsed.include_tests = value
+        elseif key == "include_imports" then
+          parsed.include_imports = value
+        elseif key == "include_external" then
+          parsed.include_external = value
+        elseif key == "include_types" then
+          parsed.include_types = value
+        end
+      elseif not parsed.snapshot_path then
+        parsed.snapshot_path = token
+      end
+    end
+    M.run_knowledge_graph(parsed)
+  end, {
+    nargs = "*",
+    complete = function()
+      return {
+        "path=",
+        "format=json",
+        "format=jsonl",
+        "pretty=true",
+        "include_tests=true",
+        "include_tests=false",
+        "include_imports=true",
+        "include_imports=false",
+        "include_external=true",
+        "include_external=false",
+        "include_types=true",
+        "include_types=false",
+      }
+    end,
+    desc = "Build knowledge graph summary and optional snapshot",
   })
 
   vim.api.nvim_create_user_command("CodeAtlasUI", function(args)

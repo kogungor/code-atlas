@@ -97,6 +97,12 @@ Example using Lua setup:
     (dot), and mermaid. Layout supports hierarchical or force metadata.
     Path defaults to the current working directory.
 
+- :CodeAtlasKnowledge [path|path=...] [format=json|jsonl]
+                      [include_tests=bool] [include_imports=bool]
+                      [include_types=bool] [include_external=bool]
+    Build a unified knowledge graph summary. If path is provided, write a
+    snapshot with schema_version "knowledge_graph.v1".
+
 - :CodeAtlasUI tree|ascii
     Switch graph UI mode.
 
