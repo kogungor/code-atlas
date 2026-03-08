@@ -228,10 +228,65 @@ local function run_project_graph(direction)
     return
   end
 
+  local function lsp_probe_positions(symbol)
+    local positions = {
+      { row = row, col = col },
+      { row = row, col = 0 },
+    }
+
+    local function add_position(r, c)
+      if r == nil or c == nil then
+        return
+      end
+      for _, pos in ipairs(positions) do
+        if pos.row == r and pos.col == c then
+          return
+        end
+      end
+      positions[#positions + 1] = { row = r, col = c }
+    end
+
+    if symbol and symbol.range then
+      add_position(symbol.range[1], symbol.range[2])
+      add_position(symbol.range[1], 0)
+      local symbol_name = symbol.short_name or symbol.name
+      if symbol_name and symbol_name ~= "" then
+        local line_text = vim.api.nvim_buf_get_lines(bufnr, symbol.range[1], symbol.range[1] + 1, false)[1] or ""
+        local name_start = line_text:find(symbol_name, 1, true)
+        if name_start then
+          add_position(symbol.range[1], name_start - 1)
+        end
+      end
+    end
+
+    return positions
+  end
+
+  local mixed_source_merge = false
+  if direction == "outgoing" and ((config.lsp or {}).enabled ~= false) then
+    local lsp = require("code-atlas.lsp")
+    if lsp.is_available(bufnr) then
+      local result, lsp_err = lsp.outgoing_candidates_at_cursor(bufnr, {
+        timeout_ms = (config.lsp or {}).timeout_ms,
+        include_external = (config.lsp or {}).include_external,
+        root = vim.fn.getcwd(),
+        positions = lsp_probe_positions(root_symbol),
+      })
+      if result and result.candidates and #result.candidates > 0 then
+        mixed_source_merge = index_mod.merge_lsp_candidates(index, root_symbol.id, result.candidates) == true
+      elseif lsp_err and (config.lsp or {}).prefer_call_hierarchy == true then
+        vim.notify("code-atlas: lsp candidate merge skipped: " .. tostring(lsp_err), vim.log.levels.DEBUG)
+      end
+    end
+  end
+
   local subgraph = graph.project_subgraph(index, root_symbol.id, {
     depth_limit = config.depth_limit,
     direction = direction,
   })
+  if mixed_source_merge then
+    subgraph.backend = "mixed(index+lsp)"
+  end
   subgraph.layout = render.layout_metadata(subgraph, {
     algorithm = ((config.layout or {}).algorithm) or "hierarchical",
     spacing_x = (config.layout or {}).spacing_x,

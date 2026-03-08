@@ -116,4 +116,16 @@ Run LSP call hierarchy smoke test (Feature 20):
 nvim --headless --clean -u tests/minimal_init.lua +"luafile tests/headless/feature20.lua" +qall
 ```
 
+Run type-aware call resolution smoke test (Feature 21):
+
+```bash
+nvim --headless --clean -u tests/minimal_init.lua +"luafile tests/headless/feature21.lua" +qall
+```
+
+Run multi-language receiver disambiguation smoke test:
+
+```bash
+nvim --headless --clean -u tests/minimal_init.lua +"luafile tests/headless/feature21_langs.lua" +qall
+```
+
 As features grow, add one file per feature in `tests/headless/` and keep each check fast.

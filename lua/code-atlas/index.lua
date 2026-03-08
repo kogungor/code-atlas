@@ -107,6 +107,50 @@ local function normalize_symbol_name(name)
   return cleaned
 end
 
+local function receiver_tail(value)
+  if not value then
+    return nil
+  end
+  local cleaned = value:gsub("[:%s]+$", "")
+  return cleaned:match("([%a_][%w_]*)$")
+end
+
+local function parse_call_signature(call_text)
+  local raw = normalize_symbol_name(call_text)
+  if not raw then
+    return nil
+  end
+
+  local normalized = raw:gsub("%?%.", ".")
+  local dcolon_idx = normalized:match("^.*()::")
+  local colon_idx = normalized:match("^.*():")
+  local dot_idx = normalized:match("^.*()%.")
+  local split_idx = dcolon_idx or colon_idx or dot_idx
+  local kind = split_idx and "member" or "function"
+
+  local name = normalized
+  local receiver = nil
+  if split_idx then
+    receiver = normalized:sub(1, split_idx - 1)
+    if dcolon_idx and split_idx == dcolon_idx then
+      name = normalized:sub(split_idx + 2)
+    else
+      name = normalized:sub(split_idx + 1)
+    end
+  end
+
+  name = name:match("^([%a_][%w_]*)") or name
+  local tail = receiver_tail(receiver)
+
+  return {
+    raw = raw,
+    name = name,
+    receiver = receiver,
+    receiver_tail = tail,
+    kind = kind,
+  }
+end
+
 local function names_match(call_name, def_name)
   local left = normalize_symbol_name(call_name)
   local right = normalize_symbol_name(def_name)
@@ -134,6 +178,144 @@ local function node_text(node, bufnr)
     return nil
   end
   return normalize_symbol_name(vim.treesitter.get_node_text(node, bufnr))
+end
+
+local function method_container_name(node, bufnr, lang)
+  if not node then
+    return nil
+  end
+
+  if (lang == "typescript" or lang == "javascript") and node:type() == "method_definition" then
+    local parent = node:parent()
+    while parent do
+      local t = parent:type()
+      if t == "class_declaration" or t == "class" or t == "class_expression" then
+        local names = parent:field("name")
+        if names and names[1] then
+          return node_text(names[1], bufnr)
+        end
+        break
+      end
+      parent = parent:parent()
+    end
+  end
+
+  if lang == "python" and node:type() == "function_definition" then
+    local parent = node:parent()
+    while parent do
+      if parent:type() == "class_definition" then
+        local names = parent:field("name")
+        if names and names[1] then
+          return node_text(names[1], bufnr)
+        end
+        local class_text = node_text(parent, bufnr)
+        if class_text then
+          return class_text:match("class%s+([%a_][%w_]*)")
+        end
+      end
+      parent = parent:parent()
+    end
+  end
+
+  if lang == "go" and node:type() == "method_declaration" then
+    local text = node_text(node, bufnr)
+    if text then
+      local receiver = text:match("^func%s*%(%s*[%w_]+%s+%*?([%a_][%w_]*)")
+      if receiver then
+        return receiver
+      end
+    end
+  end
+
+  if lang == "rust" and node:type() == "function_item" then
+    local parent = node:parent()
+    while parent do
+      if parent:type() == "impl_item" then
+        local impl_text = node_text(parent, bufnr)
+        if impl_text then
+          local container = impl_text:match("impl%s+([%a_][%w_]*)")
+          if container then
+            return container
+          end
+          local trait_for = impl_text:match("impl%s+.-for%s+([%a_][%w_]*)")
+          if trait_for then
+            return trait_for
+          end
+        end
+      end
+      parent = parent:parent()
+    end
+  end
+
+  return nil
+end
+
+local function extract_receiver_types(bufnr, lang, function_node)
+  if lang ~= "typescript" and lang ~= "javascript" and lang ~= "lua" and lang ~= "python" and lang ~= "go" and lang ~= "rust" then
+    return {}
+  end
+
+  local text = node_text(function_node, bufnr)
+  if not text or text == "" then
+    return {}
+  end
+
+  local out = {}
+  for var_name, type_name in text:gmatch("([%a_][%w_]*)%s*:%s*([%a_][%w_]*)") do
+    out[var_name] = type_name
+  end
+  for var_name, class_name in text:gmatch("const%s+([%a_][%w_]*)%s*=%s*new%s+([%a_][%w_]*)") do
+    out[var_name] = class_name
+  end
+  for var_name, class_name in text:gmatch("let%s+([%a_][%w_]*)%s*=%s*new%s+([%a_][%w_]*)") do
+    out[var_name] = class_name
+  end
+  for var_name, class_name in text:gmatch("var%s+([%a_][%w_]*)%s*=%s*new%s+([%a_][%w_]*)") do
+    out[var_name] = class_name
+  end
+
+  for var_name, class_name in text:gmatch("local%s+([%a_][%w_]*)%s*=%s*([%a_][%w_%.]*)%s*[:.]new%s*%(") do
+    out[var_name] = class_name
+  end
+  for var_name, class_name in text:gmatch("local%s+([%a_][%w_]*)%s*=%s*([%a_][%w_%.]*)%s*%(") do
+    if not out[var_name] then
+      out[var_name] = class_name
+    end
+  end
+
+  for var_name, type_name in text:gmatch("([%a_][%w_]*)%s*:%s*([%a_][%w_]*)") do
+    if not out[var_name] then
+      out[var_name] = type_name
+    end
+  end
+  for var_name, class_name in text:gmatch("([%a_][%w_]*)%s*=%s*([%a_][%w_]*)%s*%(") do
+    if not out[var_name] then
+      out[var_name] = class_name
+    end
+  end
+
+  for var_name, type_name in text:gmatch("var%s+([%a_][%w_]*)%s+%*?([%a_][%w_]*)") do
+    out[var_name] = type_name
+  end
+  for var_name, type_name in text:gmatch("([%a_][%w_]*)%s*:?=%s*&?([%a_][%w_]*)%s*{") do
+    out[var_name] = type_name
+  end
+
+  for var_name, type_name in text:gmatch("let%s+([%a_][%w_]*)%s*:%s*([%a_][%w_]*)") do
+    out[var_name] = type_name
+  end
+  for var_name, type_name in text:gmatch("let%s+([%a_][%w_]*)%s*=%s*([%a_][%w_]*)::") do
+    if not out[var_name] then
+      out[var_name] = type_name
+    end
+  end
+
+  if lang == "python" then
+    out.self = out.self or "self"
+    out.cls = out.cls or "cls"
+  end
+
+  return out
 end
 
 local function file_lines(path)
@@ -324,8 +506,10 @@ local function extract_calls_from_node(bufnr, lang, function_node)
 
     local target = call_target_node(node)
     local call_name = node_text(target, bufnr)
-    if call_name then
-      calls[#calls + 1] = call_name
+    local parsed = parse_call_signature(call_name)
+    if parsed then
+      parsed.row = node:range()
+      calls[#calls + 1] = parsed
     end
   end)
 
@@ -338,6 +522,22 @@ local function dedupe(items)
   for _, item in ipairs(items) do
     if not seen[item] then
       seen[item] = true
+      out[#out + 1] = item
+    end
+  end
+  return out
+end
+
+local function dedupe_calls(items)
+  local seen = {}
+  local out = {}
+  for _, item in ipairs(items or {}) do
+    local key = item.raw
+    if item.receiver then
+      key = item.receiver .. "->" .. item.name
+    end
+    if not seen[key] then
+      seen[key] = true
       out[#out + 1] = item
     end
   end
@@ -395,19 +595,34 @@ local function extract_functions(path, lang)
 
     if outer then
       local sr, sc, er, ec = outer:range()
-      local symbol_name = name or "<anonymous>"
-      local calls = dedupe(extract_calls_from_node(buf, lang, outer))
+      local raw_name = name or "<anonymous>"
+      local parsed_name = parse_call_signature(raw_name)
+      local short_name = raw_name
+      local container = method_container_name(outer, buf, lang)
+      if not container and parsed_name and parsed_name.kind == "member" and parsed_name.receiver then
+        container = parsed_name.receiver
+        short_name = parsed_name.name
+      end
+      local symbol_name = short_name
+      if container and short_name ~= "<anonymous>" then
+        symbol_name = container .. "." .. short_name
+      end
+      local calls = dedupe_calls(extract_calls_from_node(buf, lang, outer))
+      local receiver_types = extract_receiver_types(buf, lang, outer)
 
       symbols[#symbols + 1] = {
         id = string.format("%s:%d:%d:%s", path, sr + 1, sc + 1, symbol_name),
         name = symbol_name,
-        symbol_kind = "Function",
+        short_name = short_name,
+        container = container,
+        symbol_kind = outer:type() == "method_definition" and "Method" or "Function",
         node_type = outer:type(),
         lang = lang,
         path = path,
         relpath = path,
         range = { sr, sc, er, ec },
         calls = calls,
+        receiver_types = receiver_types,
       }
     end
   end
@@ -439,9 +654,17 @@ local function build_maps(symbols)
   local by_path = {}
   local by_id = {}
 
+  local function add_alias(key, symbol)
+    if not key or key == "" then
+      return
+    end
+    by_name[key] = by_name[key] or {}
+    by_name[key][#by_name[key] + 1] = symbol
+  end
+
   for _, symbol in ipairs(symbols) do
-    by_name[symbol.name] = by_name[symbol.name] or {}
-    by_name[symbol.name][#by_name[symbol.name] + 1] = symbol
+    add_alias(symbol.name, symbol)
+    add_alias(symbol.short_name, symbol)
 
     by_path[symbol.path] = by_path[symbol.path] or {}
     by_path[symbol.path][#by_path[symbol.path] + 1] = symbol
@@ -450,6 +673,16 @@ local function build_maps(symbols)
   end
 
   return by_name, by_path, by_id
+end
+
+local function confidence_from_score(score)
+  if score >= 170 then
+    return "high"
+  end
+  if score >= 110 then
+    return "medium"
+  end
+  return "low"
 end
 
 local function build_dependency_graph(symbols, outgoing, level)
@@ -520,13 +753,21 @@ local function build_dependency_graph(symbols, outgoing, level)
   }
 end
 
-local function call_resolution_candidates(source_symbol, call_name, by_name)
+local function call_resolution_candidates(source_symbol, call, by_name)
+  local call_name = call.name or call.raw
   local candidates = {}
+  local seen = {}
+  local receiver = call.receiver_tail
+  local receiver_type = nil
+  if receiver and source_symbol.receiver_types then
+    receiver_type = source_symbol.receiver_types[receiver]
+  end
 
   for def_name, defs in pairs(by_name) do
     if names_match(call_name, def_name) then
       for _, def in ipairs(defs) do
-        if def.id ~= source_symbol.id then
+        if def.id ~= source_symbol.id and not seen[def.id] then
+          seen[def.id] = true
           local score = 0
           local reasons = {}
 
@@ -551,11 +792,39 @@ local function call_resolution_candidates(source_symbol, call_name, by_name)
             reasons[#reasons + 1] = "anonymous_penalty"
           end
 
+          if call.kind == "member" then
+            if def.container then
+              score = score + 15
+              reasons[#reasons + 1] = "member_target"
+            end
+
+            if receiver_type and def.container then
+              if receiver_type == def.container then
+                score = score + 130
+                reasons[#reasons + 1] = "receiver_type_match"
+              elseif (receiver_type == "self" or receiver_type == "cls") and source_symbol.container and def.container == source_symbol.container then
+                score = score + 120
+                reasons[#reasons + 1] = "python_self_container_match"
+              else
+                score = score - 35
+                reasons[#reasons + 1] = "receiver_type_mismatch"
+              end
+            elseif receiver and def.container and receiver == def.container then
+              score = score + 90
+              reasons[#reasons + 1] = "receiver_name_match"
+            elseif receiver == "this" and source_symbol.container and def.container == source_symbol.container then
+              score = score + 110
+              reasons[#reasons + 1] = "this_container_match"
+            end
+          end
+
           candidates[#candidates + 1] = {
             id = def.id,
             name = def.name,
             path = def.path,
+            source = "index",
             score = score,
+            confidence = confidence_from_score(score),
             reasons = reasons,
           }
         end
@@ -580,12 +849,20 @@ local function resolve_outgoing(symbol, by_name)
   local ids = {}
   local resolutions = {}
 
-  for _, call_name in ipairs(symbol.calls or {}) do
-    local candidates = call_resolution_candidates(symbol, call_name, by_name)
+  for _, call in ipairs(symbol.calls or {}) do
+    local call_obj = call
+    if type(call_obj) == "string" then
+      call_obj = parse_call_signature(call_obj)
+    end
+    if call_obj then
+      local candidates = call_resolution_candidates(symbol, call_obj, by_name)
     local best = candidates[1]
 
     resolutions[#resolutions + 1] = {
-      call = call_name,
+      call = call_obj.raw,
+      call_name = call_obj.name,
+      receiver = call_obj.receiver,
+      receiver_type = call_obj.receiver_tail and (symbol.receiver_types or {})[call_obj.receiver_tail] or nil,
       unresolved = best == nil,
       candidates = candidates,
       best = best,
@@ -593,6 +870,7 @@ local function resolve_outgoing(symbol, by_name)
 
     if best then
       ids[#ids + 1] = best.id
+    end
     end
   end
 
@@ -628,6 +906,196 @@ local function build_edges(symbols, by_name)
   end
 
   return outgoing, incoming, call_resolutions, unresolved_count
+end
+
+local function sort_candidates(candidates)
+  table.sort(candidates, function(a, b)
+    if a.score == b.score then
+      if a.path == b.path then
+        return a.name < b.name
+      end
+      return a.path < b.path
+    end
+    return a.score > b.score
+  end)
+end
+
+local function lsp_index_candidates(index, source_symbol, lsp_candidates)
+  local out = {}
+
+  for _, item in ipairs(lsp_candidates or {}) do
+    local path = item.path and normalize_path(item.path) or nil
+    local matched = false
+
+    for _, symbol in ipairs((path and index.by_path[path]) or {}) do
+      if names_match(item.name, symbol.name) or names_match(item.name, symbol.short_name or symbol.name) then
+        local score = 165
+        local reasons = { "lsp_hierarchy", "index_symbol_match" }
+        if source_symbol.path == symbol.path then
+          score = score + 20
+          reasons[#reasons + 1] = "same_file"
+        end
+
+        out[#out + 1] = {
+          id = symbol.id,
+          name = symbol.name,
+          path = symbol.path,
+          source = "mixed(index+lsp)",
+          score = score,
+          confidence = confidence_from_score(score),
+          reasons = reasons,
+        }
+        matched = true
+      end
+    end
+
+    if not matched and path then
+      local score = 140
+      local reasons = { "lsp_hierarchy", "external_or_unindexed" }
+      if source_symbol.path == path then
+        score = score + 10
+        reasons[#reasons + 1] = "same_file"
+      end
+
+      out[#out + 1] = {
+        id = nil,
+        name = item.name,
+        path = path,
+        source = "lsp",
+        score = score,
+        confidence = confidence_from_score(score),
+        reasons = reasons,
+      }
+    end
+  end
+
+  return out
+end
+
+function M.merge_lsp_candidates(index, source_symbol_id, lsp_candidates)
+  if not index or not source_symbol_id then
+    return false
+  end
+
+  local source_symbol = index.by_id[source_symbol_id]
+  if not source_symbol then
+    return false
+  end
+
+  local resolutions = index.call_resolutions[source_symbol_id]
+  if not resolutions then
+    return false
+  end
+
+  local lsp_resolved = lsp_index_candidates(index, source_symbol, lsp_candidates)
+  if #lsp_resolved == 0 then
+    return false
+  end
+
+  local merged_any = false
+  for _, item in ipairs(resolutions) do
+    local call_name = item.call_name or item.call
+    local merged = {}
+    local seen = {}
+
+    local function add_candidate(candidate)
+      local key = tostring(candidate.id) .. "|" .. tostring(candidate.name) .. "|" .. tostring(candidate.path)
+      local prev = seen[key]
+      if prev then
+        local incoming_source = tostring(candidate.source or "")
+        local prev_source = tostring(prev.source or "")
+        if prev_source == "index" and (incoming_source == "mixed(index+lsp)" or incoming_source == "lsp") then
+          prev.source = "mixed(index+lsp)"
+          prev.reasons = prev.reasons or {}
+          prev.reasons[#prev.reasons + 1] = "lsp_confirmed"
+        end
+        if (candidate.score or 0) > (prev.score or 0) then
+          prev.score = candidate.score
+          if incoming_source ~= "" then
+            prev.source = candidate.source
+          end
+          prev.confidence = confidence_from_score(candidate.score or 0)
+          prev.reasons = candidate.reasons or prev.reasons
+        end
+        return
+      end
+
+      local clone = vim.deepcopy(candidate)
+      clone.confidence = clone.confidence or confidence_from_score(clone.score or 0)
+      merged[#merged + 1] = clone
+      seen[key] = clone
+    end
+
+    for _, candidate in ipairs(item.candidates or {}) do
+      add_candidate(candidate)
+    end
+
+    for _, candidate in ipairs(lsp_resolved) do
+      if call_name and names_match(call_name, candidate.name) then
+        add_candidate(candidate)
+        merged_any = true
+      end
+    end
+
+    sort_candidates(merged)
+    item.candidates = merged
+    item.best = merged[1]
+    item.unresolved = item.best == nil or item.best.id == nil or index.by_id[item.best.id] == nil
+  end
+
+  if not merged_any then
+    return false
+  end
+
+  local old_out = index.outgoing[source_symbol_id] or {}
+  local new_out = {}
+  for _, item in ipairs(resolutions) do
+    if item.best and item.best.id and index.by_id[item.best.id] then
+      new_out[#new_out + 1] = item.best.id
+    end
+  end
+  new_out = dedupe(new_out)
+  index.outgoing[source_symbol_id] = new_out
+
+  local old_set = {}
+  for _, id in ipairs(old_out) do
+    old_set[id] = true
+  end
+  local new_set = {}
+  for _, id in ipairs(new_out) do
+    new_set[id] = true
+  end
+
+  for target_id, _ in pairs(old_set) do
+    if not new_set[target_id] then
+      local ins = index.incoming[target_id] or {}
+      local filtered = {}
+      for _, id in ipairs(ins) do
+        if id ~= source_symbol_id then
+          filtered[#filtered + 1] = id
+        end
+      end
+      index.incoming[target_id] = dedupe(filtered)
+    end
+  end
+
+  for target_id, _ in pairs(new_set) do
+    index.incoming[target_id] = index.incoming[target_id] or {}
+    index.incoming[target_id][#index.incoming[target_id] + 1] = source_symbol_id
+    index.incoming[target_id] = dedupe(index.incoming[target_id])
+  end
+
+  local unresolved_count = 0
+  for _, entries in pairs(index.call_resolutions or {}) do
+    for _, entry in ipairs(entries or {}) do
+      if entry.unresolved then
+        unresolved_count = unresolved_count + 1
+      end
+    end
+  end
+  index.unresolved_count = unresolved_count
+
+  return true
 end
 
 local function build_import_graph(root, files)

@@ -93,6 +93,9 @@ require("code-atlas").setup({
 - Dynamic dispatch/polymorphism is not fully modeled
 - LSP call hierarchy support depends on attached server capabilities
 - LSP graph defaults to project-local symbols; set `lsp.include_external=true` to include library nodes
+- Type-aware call resolution is partial (receiver-aware for TS/JS method calls)
+- Receiver-aware heuristics now also include Python/Go/Rust patterns (best-effort)
+- Project graph now shows mixed-source resolution preview (`index`, `lsp`, `mixed(index+lsp)`) with confidence labels when available
 - Language coverage is best-effort and parser/query dependent
 - Large projects may need further performance guardrails/caching improvements
 

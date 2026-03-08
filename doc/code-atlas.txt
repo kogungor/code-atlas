@@ -158,7 +158,10 @@ Fields:
 6. Limitations                                                *code-atlas-limitations*
 
 - Cross-file resolution is currently heuristic name matching.
-- Type-aware call resolution and polymorphism modeling are not complete.
+- Type-aware call resolution is partial (receiver-aware TS/JS method matching).
+- Receiver-aware heuristics include TS/JS/Lua and best-effort Python/Go/Rust.
+- Project graph includes mixed-source resolution preview with confidence labels.
+- Polymorphism modeling is not complete.
 - LSP call hierarchy availability depends on language server support.
 - Very large repositories may require stronger indexing guardrails.
 

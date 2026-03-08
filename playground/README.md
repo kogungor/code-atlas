@@ -46,6 +46,24 @@ Suggested cursor positions:
 - `calculateTotal` for pricing chain
 - `applyDiscountRules` for coupon/VIP path
 
+For receiver/type-aware call resolution testing, open:
+
+```bash
+nvim --clean -u playground/minimal_init.lua playground/samples/lua_method_resolution.lua
+```
+
+Suggested cursor position:
+
+- `calculate_with_receivers` to verify method disambiguation across services
+
+Additional language samples for receiver disambiguation:
+
+```bash
+nvim --clean -u playground/minimal_init.lua playground/samples/py_method_resolution.py
+nvim --clean -u playground/minimal_init.lua playground/samples/go_method_resolution.go
+nvim --clean -u playground/minimal_init.lua playground/samples/rust_method_resolution.rs
+```
+
 ## Workflow for each new feature
 
 1. Add or update a sample file in `playground/samples/`.

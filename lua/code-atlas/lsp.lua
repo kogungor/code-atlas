@@ -492,6 +492,47 @@ function M.call_hierarchy_subgraph(bufnr, opts)
   }, nil
 end
 
+function M.outgoing_candidates_at_cursor(bufnr, opts)
+  opts = opts or {}
+  local timeout_ms = math.max(100, tonumber(opts.timeout_ms) or 1200)
+  local include_external = opts.include_external == true
+  local roots = workspace_roots(bufnr, opts.root or vim.fn.getcwd())
+
+  local prepared, err = prepare_item(bufnr, {
+    timeout_ms = timeout_ms,
+    positions = opts.positions,
+  })
+  if not prepared then
+    return nil, err
+  end
+
+  local calls = fetch_calls(bufnr, prepared.item, "outgoing", timeout_ms, prepared.client_id)
+  local seen = {}
+  local candidates = {}
+
+  for _, call_record in ipairs(calls or {}) do
+    local target_item = child_item(call_record, "outgoing")
+    if target_item and target_item.uri then
+      local node = node_from_item(target_item)
+      local allowed = include_external or is_within_any_root(node.path, roots)
+      if allowed then
+        local key = string.format("%s:%s", tostring(node.path), tostring(node.name))
+        if not seen[key] then
+          seen[key] = true
+          candidates[#candidates + 1] = node
+        end
+      end
+    end
+  end
+
+  return {
+    candidates = candidates,
+    client_id = prepared.client_id,
+    roots = roots,
+    include_external = include_external,
+  }, nil
+end
+
 function M.is_available(bufnr)
   return #attached_clients(bufnr) > 0
 end
