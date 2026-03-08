@@ -1,5 +1,9 @@
 local M = {}
 
+M.state = {
+  last_debug = nil,
+}
+
 local function normalize_range(item)
   local primary = item.selectionRange or item.range
   local fallback = item.range or item.selectionRange
@@ -35,6 +39,15 @@ local function is_within_root(path, root)
     prefix = prefix .. "/"
   end
   return path == normalized_root or path:sub(1, #prefix) == prefix
+end
+
+local function is_within_any_root(path, roots)
+  for _, root in ipairs(roots or {}) do
+    if is_within_root(path, root) then
+      return true
+    end
+  end
+  return false
 end
 
 local function relative_to_cwd(path)
@@ -80,7 +93,75 @@ local function attached_clients(bufnr)
   return vim.lsp.get_clients({ bufnr = bufnr }) or {}
 end
 
-local function supports_method(client, method, bufnr)
+local function client_workspace_roots(client)
+  local roots = {}
+
+  for _, folder in ipairs(client.workspace_folders or {}) do
+    local path = normalize_path_from_uri(folder.uri)
+    if path then
+      roots[#roots + 1] = path
+    end
+  end
+
+  local config_root = client.config and client.config.root_dir
+  if config_root and config_root ~= "" then
+    roots[#roots + 1] = vim.fs.normalize(config_root)
+  end
+
+  local deduped = {}
+  local seen = {}
+  for _, root in ipairs(roots) do
+    if not seen[root] then
+      seen[root] = true
+      deduped[#deduped + 1] = root
+    end
+  end
+  return deduped
+end
+
+local function workspace_roots(bufnr, fallback_root)
+  local roots = {}
+  for _, client in ipairs(attached_clients(bufnr)) do
+    for _, root in ipairs(client_workspace_roots(client)) do
+      roots[#roots + 1] = root
+    end
+  end
+
+  if #roots == 0 and fallback_root and fallback_root ~= "" then
+    roots[#roots + 1] = vim.fs.normalize(fallback_root)
+  end
+
+  local deduped = {}
+  local seen = {}
+  for _, root in ipairs(roots) do
+    if not seen[root] then
+      seen[root] = true
+      deduped[#deduped + 1] = root
+    end
+  end
+
+  return deduped
+end
+
+local function set_last_debug(payload)
+  M.state.last_debug = vim.deepcopy(payload)
+end
+
+local supports_method
+
+local function client_summary(client, bufnr)
+  return {
+    id = client.id,
+    name = client.name,
+    supports_prepare = supports_method(client, "textDocument/prepareCallHierarchy", bufnr),
+    supports_incoming = supports_method(client, "callHierarchy/incomingCalls", bufnr),
+    supports_outgoing = supports_method(client, "callHierarchy/outgoingCalls", bufnr),
+    offset_encoding = client.offset_encoding,
+    roots = client_workspace_roots(client),
+  }
+end
+
+supports_method = function(client, method, bufnr)
   if not client then
     return false
   end
@@ -323,17 +404,33 @@ function M.call_hierarchy_subgraph(bufnr, opts)
   local depth_limit = math.max(0, math.floor(tonumber(opts.depth_limit) or 2))
   local timeout_ms = math.max(100, tonumber(opts.timeout_ms) or 1200)
   local include_external = opts.include_external == true
-  local root = vim.fs.normalize(opts.root or vim.fn.getcwd())
+  local roots = workspace_roots(bufnr, opts.root or vim.fn.getcwd())
+  local debug = {
+    timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+    bufnr = bufnr,
+    direction = direction,
+    depth_limit = depth_limit,
+    include_external = include_external,
+    roots = roots,
+    clients = {},
+  }
+  for _, client in ipairs(attached_clients(bufnr)) do
+    debug.clients[#debug.clients + 1] = client_summary(client, bufnr)
+  end
 
   local prepared, err = prepare_item(bufnr, {
     timeout_ms = timeout_ms,
     positions = opts.positions,
   })
   if not prepared then
+    debug.error = err
+    set_last_debug(debug)
     return nil, err
   end
   local root_item = prepared.item
   local client_id = prepared.client_id
+  debug.selected_client_id = client_id
+  debug.root_item = root_item and root_item.name or nil
 
   local root_node = node_from_item(root_item)
   local nodes = {
@@ -358,20 +455,29 @@ function M.call_hierarchy_subgraph(bufnr, opts)
         local target_item = child_item(call_record, direction)
         if target_item and target_item.uri then
           local target_node = node_from_item(target_item)
-          if include_external or is_within_root(target_node.path, root) then
-          nodes[target_node.id] = nodes[target_node.id] or target_node
-          adjacency[current.id][#adjacency[current.id] + 1] = target_node.id
-          queue[#queue + 1] = {
-            item = target_item,
-            id = target_node.id,
-            depth = current.depth + 1,
-          }
+          if include_external or is_within_any_root(target_node.path, roots) then
+            nodes[target_node.id] = nodes[target_node.id] or target_node
+            adjacency[current.id][#adjacency[current.id] + 1] = target_node.id
+            queue[#queue + 1] = {
+              item = target_item,
+              id = target_node.id,
+              depth = current.depth + 1,
+            }
           end
         end
       end
       adjacency[current.id] = dedupe(adjacency[current.id])
     end
   end
+
+  local edge_count = 0
+  for _, children in pairs(adjacency) do
+    edge_count = edge_count + #children
+  end
+
+  debug.node_count = vim.tbl_count(nodes)
+  debug.edge_count = edge_count
+  set_last_debug(debug)
 
   return {
     root_id = root_node.id,
@@ -388,6 +494,18 @@ end
 
 function M.is_available(bufnr)
   return #attached_clients(bufnr) > 0
+end
+
+function M.client_debug_info(bufnr)
+  local out = {}
+  for _, client in ipairs(attached_clients(bufnr)) do
+    out[#out + 1] = client_summary(client, bufnr)
+  end
+  return out
+end
+
+function M.get_last_debug()
+  return vim.deepcopy(M.state.last_debug)
 end
 
 return M

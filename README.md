@@ -54,6 +54,7 @@ Local development with `lazy.nvim`:
 - `:CodeAtlasProjectReverseGraph` reverse project call graph (callers)
 - `:CodeAtlasLSPGraph` LSP call hierarchy graph (callees)
 - `:CodeAtlasLSPReverseGraph` LSP call hierarchy reverse graph (callers)
+- `:CodeAtlasLSPDebug` inspect attached LSP clients and last hierarchy run
 - `:CodeAtlasModuleGraph` module dependency graph
 - `:CodeAtlasPackageGraph` package dependency graph
 - `:CodeAtlasImportGraph` file import graph
@@ -91,6 +92,7 @@ require("code-atlas").setup({
 - Cross-file resolution is heuristic name matching (not full type-aware resolution yet)
 - Dynamic dispatch/polymorphism is not fully modeled
 - LSP call hierarchy support depends on attached server capabilities
+- LSP graph defaults to project-local symbols; set `lsp.include_external=true` to include library nodes
 - Language coverage is best-effort and parser/query dependent
 - Large projects may need further performance guardrails/caching improvements
 

@@ -376,6 +376,77 @@ function M.run_lsp_call_graph(direction, opts)
   return true
 end
 
+function M.show_lsp_debug()
+  local lsp = require("code-atlas.lsp")
+  local window = require("code-atlas.window")
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  local source_win = vim.api.nvim_get_current_win()
+  local path = vim.fs.normalize(vim.api.nvim_buf_get_name(bufnr))
+
+  local lines = {
+    "code-atlas lsp debug",
+    "",
+    "buffer: " .. (path ~= "" and path or "[No Name]"),
+    "",
+    "attached_clients:",
+  }
+
+  local clients = lsp.client_debug_info(bufnr)
+  if #clients == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, client in ipairs(clients) do
+      lines[#lines + 1] = string.format(
+        "  - %s(id=%s) prepare=%s incoming=%s outgoing=%s encoding=%s",
+        tostring(client.name),
+        tostring(client.id),
+        tostring(client.supports_prepare),
+        tostring(client.supports_incoming),
+        tostring(client.supports_outgoing),
+        tostring(client.offset_encoding)
+      )
+      if client.roots and #client.roots > 0 then
+        for _, root in ipairs(client.roots) do
+          lines[#lines + 1] = "      root: " .. root
+        end
+      end
+    end
+  end
+
+  local last = lsp.get_last_debug()
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "last_lsp_graph_run:"
+  if not last then
+    lines[#lines + 1] = "  (none)"
+  else
+    lines[#lines + 1] = "  timestamp: " .. tostring(last.timestamp)
+    lines[#lines + 1] = "  direction: " .. tostring(last.direction)
+    lines[#lines + 1] = "  depth_limit: " .. tostring(last.depth_limit)
+    lines[#lines + 1] = "  include_external: " .. tostring(last.include_external)
+    lines[#lines + 1] = "  selected_client_id: " .. tostring(last.selected_client_id)
+    lines[#lines + 1] = "  root_item: " .. tostring(last.root_item)
+    lines[#lines + 1] = "  node_count: " .. tostring(last.node_count)
+    lines[#lines + 1] = "  edge_count: " .. tostring(last.edge_count)
+    if last.error then
+      lines[#lines + 1] = "  error: " .. tostring(last.error)
+    end
+    if last.roots and #last.roots > 0 then
+      lines[#lines + 1] = "  roots:"
+      for _, root in ipairs(last.roots) do
+        lines[#lines + 1] = "    - " .. root
+      end
+    end
+  end
+
+  window.open(lines, {
+    title = " code-atlas lsp debug ",
+    source_win = source_win,
+    source_buf = bufnr,
+    line_actions = {},
+  })
+end
+
 function M.run_module_dependency_graph(level)
   level = level or "module"
   local index_mod = require("code-atlas.index")
@@ -798,6 +869,12 @@ function M.create_user_commands()
     M.run_lsp_call_graph("incoming")
   end, {
     desc = "Open LSP reverse call hierarchy graph (callers)",
+  })
+
+  vim.api.nvim_create_user_command("CodeAtlasLSPDebug", function()
+    M.show_lsp_debug()
+  end, {
+    desc = "Show LSP call hierarchy debug report",
   })
 
   vim.api.nvim_create_user_command("CodeAtlasModuleGraph", function()

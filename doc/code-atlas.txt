@@ -71,6 +71,9 @@ Example using Lua setup:
 - :CodeAtlasLSPReverseGraph
     Show reverse LSP call hierarchy graph (callers) from function under cursor.
 
+- :CodeAtlasLSPDebug
+    Show attached LSP client capabilities and last call hierarchy run details.
+
 - :CodeAtlasModuleGraph
     Show module dependency graph rooted at current symbol module.
 
