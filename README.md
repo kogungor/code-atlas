@@ -58,7 +58,7 @@ Local development with `lazy.nvim`:
 - `:CodeAtlasImportReverseGraph` reverse import graph (dependents)
 - `:CodeAtlasDeadCode` dead function report
 - `:CodeAtlasImpact` impact analysis for function under cursor
-- `:CodeAtlasExport [format] [path] [incoming|outgoing] [depth=N]` export project graph for symbol under cursor
+- `:CodeAtlasExport [format] [path] [incoming|outgoing] [depth=N] [layout=hierarchical|force]` export project graph for symbol under cursor
 - `:CodeAtlasUI tree|ascii` switch UI mode
 
 ## Main Configuration
@@ -66,6 +66,9 @@ Local development with `lazy.nvim`:
 ```lua
 require("code-atlas").setup({
   depth_limit = 2,
+  layout = {
+    algorithm = "hierarchical", -- "hierarchical" | "force"
+  },
   ui = {
     mode = "tree",     -- "tree" | "ascii"
     border = "rounded", -- floating window border style

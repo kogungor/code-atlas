@@ -7,6 +7,289 @@ local function format_range(range)
   return string.format("%d:%d-%d:%d", sr + 1, sc + 1, er + 1, ec)
 end
 
+local function sorted_ids(map)
+  local ids = {}
+  for id, _ in pairs(map or {}) do
+    ids[#ids + 1] = id
+  end
+  table.sort(ids)
+  return ids
+end
+
+local function compute_degrees(subgraph)
+  local in_degree = {}
+  local out_degree = {}
+
+  for _, node_id in ipairs(sorted_ids(subgraph.nodes or {})) do
+    in_degree[node_id] = 0
+    out_degree[node_id] = 0
+  end
+
+  for source_id, children in pairs(subgraph.adjacency or {}) do
+    out_degree[source_id] = #children
+    for _, target_id in ipairs(children or {}) do
+      in_degree[target_id] = (in_degree[target_id] or 0) + 1
+    end
+  end
+
+  return in_degree, out_degree
+end
+
+local function hierarchical_layout(subgraph, opts)
+  opts = opts or {}
+  local spacing_x = tonumber(opts.spacing_x) or 220
+  local spacing_y = tonumber(opts.spacing_y) or 90
+  local root = subgraph.root_id or subgraph.root
+
+  local depths = {}
+  local queue = {}
+  local max_depth = 0
+  if root then
+    depths[root] = 0
+    queue[1] = root
+  end
+
+  while #queue > 0 do
+    local current = table.remove(queue, 1)
+    local depth = depths[current] or 0
+    max_depth = math.max(max_depth, depth)
+    for _, next_id in ipairs(subgraph.adjacency[current] or {}) do
+      if depths[next_id] == nil then
+        depths[next_id] = depth + 1
+        queue[#queue + 1] = next_id
+      end
+    end
+  end
+
+  local layers = {}
+  for _, node_id in ipairs(sorted_ids(subgraph.nodes or {})) do
+    local depth = depths[node_id]
+    if depth == nil then
+      depth = max_depth + 1
+    end
+    layers[depth] = layers[depth] or {}
+    layers[depth][#layers[depth] + 1] = node_id
+  end
+
+  local nodes = {}
+  local bounds = {
+    min_x = 0,
+    max_x = 0,
+    min_y = 0,
+    max_y = 0,
+  }
+  local first = true
+
+  for depth, ids in pairs(layers) do
+    table.sort(ids)
+    local center_offset = (#ids - 1) * spacing_y / 2
+    for i, node_id in ipairs(ids) do
+      local x = depth * spacing_x
+      local y = (i - 1) * spacing_y - center_offset
+      nodes[node_id] = {
+        x = x,
+        y = y,
+        depth = depth,
+        layer_index = i,
+      }
+      if first then
+        bounds.min_x, bounds.max_x = x, x
+        bounds.min_y, bounds.max_y = y, y
+        first = false
+      else
+        bounds.min_x = math.min(bounds.min_x, x)
+        bounds.max_x = math.max(bounds.max_x, x)
+        bounds.min_y = math.min(bounds.min_y, y)
+        bounds.max_y = math.max(bounds.max_y, y)
+      end
+    end
+  end
+
+  local out_layers = {}
+  local layer_keys = {}
+  for depth, _ in pairs(layers) do
+    layer_keys[#layer_keys + 1] = depth
+  end
+  table.sort(layer_keys)
+  for _, depth in ipairs(layer_keys) do
+    out_layers[#out_layers + 1] = {
+      depth = depth,
+      ids = layers[depth],
+    }
+  end
+
+  return {
+    algorithm = "hierarchical",
+    direction = subgraph.direction or "outgoing",
+    nodes = nodes,
+    layers = out_layers,
+    bounds = bounds,
+    options = {
+      spacing_x = spacing_x,
+      spacing_y = spacing_y,
+    },
+  }
+end
+
+local function force_layout(subgraph, opts)
+  opts = opts or {}
+  local iterations = math.max(1, math.floor(tonumber(opts.iterations) or 24))
+  local width = tonumber(opts.width) or 1200
+  local height = tonumber(opts.height) or 800
+  local damping = tonumber(opts.damping) or 0.85
+
+  local ids = sorted_ids(subgraph.nodes or {})
+  local n = #ids
+  if n == 0 then
+    return {
+      algorithm = "force",
+      direction = subgraph.direction or "outgoing",
+      nodes = {},
+      layers = {},
+      bounds = { min_x = 0, max_x = 0, min_y = 0, max_y = 0 },
+      options = {
+        iterations = iterations,
+        width = width,
+        height = height,
+        damping = damping,
+      },
+    }
+  end
+
+  local k = math.sqrt((width * height) / n)
+  local radius = math.min(width, height) * 0.35
+  local positions = {}
+  local velocities = {}
+  local index = {}
+
+  for i, id in ipairs(ids) do
+    index[id] = i
+    local angle = (2 * math.pi * (i - 1)) / n
+    positions[id] = {
+      x = math.cos(angle) * radius,
+      y = math.sin(angle) * radius,
+    }
+    velocities[id] = { x = 0, y = 0 }
+  end
+
+  local edges = {}
+  for source_id, children in pairs(subgraph.adjacency or {}) do
+    for _, target_id in ipairs(children or {}) do
+      if index[source_id] and index[target_id] then
+        edges[#edges + 1] = { source_id, target_id }
+      end
+    end
+  end
+
+  local function norm(dx, dy)
+    local d2 = dx * dx + dy * dy
+    if d2 < 1e-6 then
+      return 1e-3
+    end
+    return math.sqrt(d2)
+  end
+
+  for _ = 1, iterations do
+    local force = {}
+    for _, id in ipairs(ids) do
+      force[id] = { x = 0, y = 0 }
+    end
+
+    for i = 1, n do
+      local a_id = ids[i]
+      local a = positions[a_id]
+      for j = i + 1, n do
+        local b_id = ids[j]
+        local b = positions[b_id]
+        local dx = a.x - b.x
+        local dy = a.y - b.y
+        local d = norm(dx, dy)
+        local repulse = (k * k) / d
+        local fx = (dx / d) * repulse
+        local fy = (dy / d) * repulse
+        force[a_id].x = force[a_id].x + fx
+        force[a_id].y = force[a_id].y + fy
+        force[b_id].x = force[b_id].x - fx
+        force[b_id].y = force[b_id].y - fy
+      end
+    end
+
+    for _, edge in ipairs(edges) do
+      local a_id = edge[1]
+      local b_id = edge[2]
+      local a = positions[a_id]
+      local b = positions[b_id]
+      local dx = b.x - a.x
+      local dy = b.y - a.y
+      local d = norm(dx, dy)
+      local attract = (d * d) / k
+      local fx = (dx / d) * attract
+      local fy = (dy / d) * attract
+      force[a_id].x = force[a_id].x + fx
+      force[a_id].y = force[a_id].y + fy
+      force[b_id].x = force[b_id].x - fx
+      force[b_id].y = force[b_id].y - fy
+    end
+
+    for _, id in ipairs(ids) do
+      velocities[id].x = (velocities[id].x + force[id].x * 0.01) * damping
+      velocities[id].y = (velocities[id].y + force[id].y * 0.01) * damping
+      positions[id].x = positions[id].x + velocities[id].x
+      positions[id].y = positions[id].y + velocities[id].y
+      positions[id].x = math.max(-width / 2, math.min(width / 2, positions[id].x))
+      positions[id].y = math.max(-height / 2, math.min(height / 2, positions[id].y))
+    end
+  end
+
+  local in_degree, out_degree = compute_degrees(subgraph)
+  local nodes = {}
+  local bounds = {
+    min_x = math.huge,
+    max_x = -math.huge,
+    min_y = math.huge,
+    max_y = -math.huge,
+  }
+
+  for _, id in ipairs(ids) do
+    local pos = positions[id]
+    nodes[id] = {
+      x = pos.x,
+      y = pos.y,
+      depth = nil,
+      layer_index = nil,
+      in_degree = in_degree[id] or 0,
+      out_degree = out_degree[id] or 0,
+    }
+    bounds.min_x = math.min(bounds.min_x, pos.x)
+    bounds.max_x = math.max(bounds.max_x, pos.x)
+    bounds.min_y = math.min(bounds.min_y, pos.y)
+    bounds.max_y = math.max(bounds.max_y, pos.y)
+  end
+
+  return {
+    algorithm = "force",
+    direction = subgraph.direction or "outgoing",
+    nodes = nodes,
+    layers = {},
+    bounds = bounds,
+    options = {
+      iterations = iterations,
+      width = width,
+      height = height,
+      damping = damping,
+    },
+  }
+end
+
+function M.layout_metadata(subgraph, opts)
+  opts = opts or {}
+  local algorithm = (opts.algorithm or "hierarchical"):lower()
+  if algorithm == "force" or algorithm == "force_directed" then
+    return force_layout(subgraph, opts)
+  end
+  return hierarchical_layout(subgraph, opts)
+end
+
 function M.call_graph_lines(func, calls)
   return M.call_graph_document(func, calls).lines
 end
@@ -172,12 +455,14 @@ function M.project_graph_document(index, subgraph)
 
   local direction = subgraph.direction or "outgoing"
   local relation_label = direction == "incoming" and "callers" or "callees"
+  local layout_algo = ((subgraph.layout or {}).algorithm) or "none"
 
   local lines = {
     "code-atlas project graph",
     "",
     string.format("root: %s", root_label),
     string.format("mode: %s", relation_label),
+    string.format("layout: %s", layout_algo),
     string.format("depth_limit: %d", subgraph.depth_limit),
     string.format("nodes: %d, edges: %d", node_count, edge_count),
     string.format("unresolved_calls: %d", index.unresolved_count or 0),
@@ -248,6 +533,7 @@ function M.dependency_graph_document(dep_graph, subgraph, opts)
 
   local direction = subgraph.direction or "outgoing"
   local relation_label = direction == "incoming" and "dependents" or "dependencies"
+  local layout_algo = ((subgraph.layout or {}).algorithm) or "none"
 
   local node_count = 0
   local edge_count = 0
@@ -263,6 +549,7 @@ function M.dependency_graph_document(dep_graph, subgraph, opts)
     "",
     string.format("root: %s", root_label),
     string.format("mode: %s", relation_label),
+    string.format("layout: %s", layout_algo),
     string.format("depth_limit: %d", subgraph.depth_limit),
     string.format("nodes: %d, edges: %d", node_count, edge_count),
     string.format("summary_nodes: %d, summary_edges: %d", dep_graph.node_count or 0, dep_graph.edge_count or 0),
