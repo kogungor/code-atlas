@@ -125,6 +125,15 @@ Example using Lua setup:
     Show git-based evolution timeline with commit churn and file/symbol
     hotspots. If out is provided, write a snapshot.
 
+- :CodeAtlasViewer [incoming|outgoing]
+                   [depth=N]
+                   [dynamic_only=bool]
+                   [kind=all|function|method]
+                   [filter=path_prefix]
+                   [search=query]
+    Open interactive graph viewer with focus, filter, search, and
+    zoom/pan-style navigation shortcuts.
+
 - :CodeAtlasUI tree|ascii
     Switch graph UI mode.
 
@@ -195,6 +204,14 @@ Default configuration:
       export_format = "json",
       export_pretty = true,
     },
+    viewer = {
+      depth_limit = 3,
+      direction = "outgoing",
+      dynamic_only = false,
+      node_kind = "all",
+      filter_path_prefix = nil,
+      search_query = nil,
+    },
   }
 <
 
@@ -237,6 +254,12 @@ Fields:
   evolution.timeout_ms  Timeout for git history command.
   evolution.export_format  Snapshot format for evolution report.
   evolution.export_pretty  Pretty-print evolution snapshot output.
+  viewer.depth_limit  Traversal depth for interactive viewer.
+  viewer.direction  Initial graph direction (incoming/outgoing).
+  viewer.dynamic_only  Show only dynamic/polymorphic edges.
+  viewer.node_kind  Node kind filter: all/function/method.
+  viewer.filter_path_prefix  Optional path-prefix filter.
+  viewer.search_query  Optional initial search query.
 
 ==============================================================================
 6. Limitations                                                *code-atlas-limitations*
@@ -251,6 +274,7 @@ Fields:
 - Architecture layer grouping is heuristic and may need project-specific tuning.
 - Violation severity is heuristic and should be calibrated per project.
 - Evolution hotspots are heuristic and based on git churn + current index mapping.
+- Interactive viewer pan/zoom model is terminal-oriented and intentionally lightweight.
 
 ==============================================================================
 vim:tw=78:ts=8:ft=help:norl:

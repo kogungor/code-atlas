@@ -811,9 +811,34 @@ function M.run_graph_export(raw_args)
   local row = cursor[1] - 1
   local col = cursor[2]
 
-  local root_symbol = index_mod.find_symbol_at(index, path, row, col)
+  local candidates = {
+    path,
+    vim.fs.normalize(vim.fn.fnamemodify(path, ":p")),
+    vim.fs.normalize(vim.fn.resolve(path)),
+  }
+  local seen = {}
+  local root_symbol = nil
+  local symbols_in_file = nil
+  for _, candidate in ipairs(candidates) do
+    if candidate and candidate ~= "" and not seen[candidate] then
+      seen[candidate] = true
+      symbols_in_file = index.by_path[candidate] or symbols_in_file
+      root_symbol = index_mod.find_symbol_at(index, candidate, row, col)
+      if root_symbol then
+        break
+      end
+    end
+  end
+
   if not root_symbol then
-    vim.notify("code-atlas: no indexed function under cursor", vim.log.levels.WARN)
+    if not symbols_in_file or #symbols_in_file == 0 then
+      vim.notify(
+        "code-atlas: current file has no indexed symbols (check parser/query support for this language)",
+        vim.log.levels.WARN
+      )
+    else
+      vim.notify("code-atlas: no indexed function under cursor", vim.log.levels.WARN)
+    end
     return nil, "no indexed function under cursor"
   end
 
@@ -1174,6 +1199,261 @@ function M.run_code_evolution(opts)
   return report, nil
 end
 
+local function parse_viewer_args(raw_args)
+  local out = {
+    direction = nil,
+    depth_limit = nil,
+    dynamic_only = nil,
+    filter_path_prefix = nil,
+    search_query = nil,
+    node_kind = nil,
+  }
+
+  for _, token in ipairs(raw_args or {}) do
+    local key, value = token:match("^([%w_]+)=(.+)$")
+    if key then
+      key = key:lower()
+      if key == "direction" then
+        value = tostring(value):lower()
+        if value ~= "incoming" and value ~= "outgoing" then
+          return nil, "direction must be incoming or outgoing"
+        end
+        out.direction = value
+      elseif key == "depth" or key == "depth_limit" then
+        local n = tonumber(value)
+        if not n or n < 0 then
+          return nil, "depth must be a non-negative number"
+        end
+        out.depth_limit = math.floor(n)
+      elseif key == "dynamic" or key == "dynamic_only" then
+        local parsed = parse_bool(value)
+        if parsed == nil then
+          return nil, "dynamic_only must be true/false"
+        end
+        out.dynamic_only = parsed
+      elseif key == "filter" or key == "filter_path" then
+        out.filter_path_prefix = value
+      elseif key == "search" or key == "query" then
+        out.search_query = value
+      elseif key == "kind" or key == "node_kind" then
+        local kind = tostring(value):lower()
+        if kind ~= "all" and kind ~= "function" and kind ~= "method" then
+          return nil, "node_kind must be all, function, or method"
+        end
+        out.node_kind = kind
+      else
+        return nil, "unknown option: " .. tostring(key)
+      end
+    elseif token == "incoming" or token == "outgoing" then
+      out.direction = token
+    else
+      return nil, "unexpected argument: " .. tostring(token)
+    end
+  end
+
+  return out, nil
+end
+
+function M.run_interactive_viewer(opts)
+  opts = opts or {}
+  local index_mod = require("code-atlas.index")
+  local render = require("code-atlas.render")
+  local window = require("code-atlas.window")
+  local viewer = require("code-atlas.viewer")
+  local config = require("code-atlas.config").get()
+
+  opts = vim.tbl_deep_extend("force", vim.deepcopy(config.viewer or {}), opts)
+
+  local index = index_mod.get()
+  if not index then
+    index = M.build_project_index({ root = vim.fn.getcwd() })
+  end
+  if not index then
+    vim.notify("code-atlas: project index is unavailable", vim.log.levels.ERROR)
+    return nil, "project index unavailable"
+  end
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  local source_win = vim.api.nvim_get_current_win()
+  local path = vim.fs.normalize(vim.api.nvim_buf_get_name(bufnr))
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local row = cursor[1] - 1
+  local col = cursor[2]
+
+  local root_symbol = index_mod.find_symbol_at(index, path, row, col)
+  if not root_symbol then
+    vim.notify("code-atlas: no indexed function under cursor", vim.log.levels.WARN)
+    return nil, "no indexed function under cursor"
+  end
+
+  local session = viewer.new_session(index, {
+    root_id = root_symbol.id,
+    depth_limit = opts.depth_limit,
+    direction = opts.direction,
+    node_kind_filter = opts.node_kind,
+  })
+  viewer.set_filter_path(session, opts.filter_path_prefix)
+  viewer.set_search(session, opts.search_query)
+  if opts.dynamic_only == true then
+    session.dynamic_only = true
+  end
+
+  local function selected_symbol_id()
+    local state = window.get_state()
+    if not state.win or not vim.api.nvim_win_is_valid(state.win) then
+      return nil
+    end
+    local line = vim.api.nvim_win_get_cursor(state.win)[1]
+    local action = (state.line_actions or {})[line]
+    return action and action.symbol_id or nil
+  end
+
+  local function redraw()
+    local subgraph, stats = viewer.build_subgraph(session)
+    local doc = render.interactive_viewer_document(index, subgraph, {
+      focus_root = session.focus_root_id,
+      depth_limit = session.depth_limit,
+      filter_path_prefix = session.filter_path_prefix,
+      search_query = session.search_query,
+      dynamic_only = session.dynamic_only,
+      node_kind = session.node_kind_filter,
+      focus_history_size = #session.focus_history,
+      hidden_nodes = stats.hidden_nodes,
+      total_nodes = stats.total_nodes,
+    })
+
+    viewer.update_search_matches(session, doc.lines)
+
+    window.open(doc.lines, {
+      title = " code-atlas interactive viewer ",
+      source_win = source_win,
+      source_buf = bufnr,
+      line_actions = doc.line_actions,
+      on_refresh = redraw,
+      line_highlights = (function()
+        local highlights = {}
+        for _, line in ipairs(session.search_matches or {}) do
+          highlights[#highlights + 1] = { line = line, group = "Search" }
+        end
+        return highlights
+      end)(),
+      key_actions = {
+        ["f"] = function()
+          local symbol_id = selected_symbol_id()
+          if not symbol_id then
+            vim.notify("code-atlas: select a symbol line to focus", vim.log.levels.WARN)
+            return
+          end
+          viewer.push_focus(session, symbol_id)
+          redraw()
+        end,
+        ["F"] = function()
+          session.focus_root_id = session.initial_root_id
+          session.focus_history = { session.initial_root_id }
+          session.focus_history_index = 1
+          redraw()
+        end,
+        ["/"] = function()
+          vim.ui.input({
+            prompt = "code-atlas viewer search: ",
+            default = session.search_query or "",
+          }, function(input)
+            if input ~= nil then
+              viewer.set_search(session, input)
+              redraw()
+            end
+          end)
+        end,
+        ["n"] = function()
+          if not viewer.jump_to_search_match(session, 1) then
+            vim.notify("code-atlas: no search matches", vim.log.levels.WARN)
+          end
+        end,
+        ["N"] = function()
+          if not viewer.jump_to_search_match(session, -1) then
+            vim.notify("code-atlas: no search matches", vim.log.levels.WARN)
+          end
+        end,
+        ["s"] = function()
+          vim.ui.input({
+            prompt = "code-atlas viewer path filter: ",
+            default = session.filter_path_prefix or "",
+          }, function(input)
+            if input ~= nil then
+              viewer.set_filter_path(session, input)
+              redraw()
+            end
+          end)
+        end,
+        ["k"] = function()
+          vim.ui.select({ "all", "function", "method" }, {
+            prompt = "code-atlas viewer node kind:",
+            format_item = function(item)
+              return item
+            end,
+          }, function(choice)
+            if choice then
+              viewer.set_node_kind_filter(session, choice)
+              redraw()
+            end
+          end)
+        end,
+        ["d"] = function()
+          viewer.toggle_dynamic_only(session)
+          redraw()
+        end,
+        ["+"] = function()
+          viewer.adjust_depth(session, 1)
+          redraw()
+        end,
+        ["-"] = function()
+          viewer.adjust_depth(session, -1)
+          redraw()
+        end,
+        ["H"] = function()
+          if viewer.pan_graph(session, "in") then
+            redraw()
+          else
+            vim.notify("code-atlas: no incoming neighbor for pan", vim.log.levels.WARN)
+          end
+        end,
+        ["L"] = function()
+          if viewer.pan_graph(session, "out") then
+            redraw()
+          else
+            vim.notify("code-atlas: no outgoing neighbor for pan", vim.log.levels.WARN)
+          end
+        end,
+        ["B"] = function()
+          if viewer.pan_history(session, -1) then
+            redraw()
+          else
+            vim.notify("code-atlas: no previous focus history", vim.log.levels.WARN)
+          end
+        end,
+        ["W"] = function()
+          if viewer.pan_history(session, 1) then
+            redraw()
+          else
+            vim.notify("code-atlas: no forward focus history", vim.log.levels.WARN)
+          end
+        end,
+      },
+    })
+
+    if #session.search_matches > 0 then
+      local state = window.get_state()
+      if state.win and vim.api.nvim_win_is_valid(state.win) then
+        local line = session.search_matches[session.search_match_idx]
+        vim.api.nvim_win_set_cursor(state.win, { line, 0 })
+      end
+    end
+  end
+
+  redraw()
+  return session, nil
+end
+
 function M.set_ui_mode(mode)
   mode = (mode or ""):lower()
   if mode ~= "tree" and mode ~= "ascii" then
@@ -1406,6 +1686,34 @@ function M.create_user_commands()
       }
     end,
     desc = "Show code evolution timeline and churn hotspots from git history",
+  })
+
+  vim.api.nvim_create_user_command("CodeAtlasViewer", function(args)
+    local parsed, parse_err = parse_viewer_args(args.fargs)
+    if not parsed then
+      vim.notify("code-atlas: viewer args invalid: " .. tostring(parse_err), vim.log.levels.ERROR)
+      return
+    end
+    M.run_interactive_viewer(parsed)
+  end, {
+    nargs = "*",
+    complete = function()
+      return {
+        "outgoing",
+        "incoming",
+        "direction=outgoing",
+        "direction=incoming",
+        "depth=3",
+        "dynamic_only=true",
+        "dynamic_only=false",
+        "kind=all",
+        "kind=function",
+        "kind=method",
+        "filter=lua/code-atlas",
+        "search=graph",
+      }
+    end,
+    desc = "Open advanced interactive graph viewer with focus/filter/search",
   })
 
   vim.api.nvim_create_user_command("CodeAtlasUI", function(args)

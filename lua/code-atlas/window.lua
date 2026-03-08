@@ -8,6 +8,10 @@ local M = {
     on_expand = nil,
     on_collapse = nil,
     on_refresh = nil,
+    key_actions = {},
+    last_lines = nil,
+    highlight_ns = vim.api.nvim_create_namespace("code-atlas-window"),
+    line_highlights = {},
   },
 }
 
@@ -62,9 +66,34 @@ local function ensure_buffer()
 end
 
 local function set_buffer_content(buf, lines)
+  if M.state.last_lines and #M.state.last_lines == #lines then
+    local same = true
+    for i = 1, #lines do
+      if M.state.last_lines[i] ~= lines[i] then
+        same = false
+        break
+      end
+    end
+    if same then
+      return
+    end
+  end
+
   vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
+  M.state.last_lines = vim.deepcopy(lines)
+end
+
+local function apply_line_highlights(buf, line_highlights)
+  vim.api.nvim_buf_clear_namespace(buf, M.state.highlight_ns, 0, -1)
+  for _, item in ipairs(line_highlights or {}) do
+    if item and item.line then
+      local line = math.max(1, tonumber(item.line) or 1)
+      local group = item.group or "Search"
+      vim.api.nvim_buf_add_highlight(buf, M.state.highlight_ns, group, line - 1, 0, -1)
+    end
+  end
 end
 
 local function set_window_keymaps(buf)
@@ -99,6 +128,12 @@ local function set_window_keymaps(buf)
   vim.keymap.set("n", "r", function()
     M.refresh()
   end, opts)
+
+  for key, handler in pairs(M.state.key_actions or {}) do
+    if type(handler) == "function" then
+      vim.keymap.set("n", key, handler, opts)
+    end
+  end
 end
 
 function M.open(lines, opts)
@@ -117,6 +152,8 @@ function M.open(lines, opts)
   M.state.on_expand = opts.on_expand
   M.state.on_collapse = opts.on_collapse
   M.state.on_refresh = opts.on_refresh
+  M.state.key_actions = opts.key_actions or {}
+  M.state.line_highlights = opts.line_highlights or {}
 
   local buf = ensure_buffer()
   local width, height, row, col = dimensions(lines, merged_ui)
@@ -152,6 +189,7 @@ function M.open(lines, opts)
 
   vim.api.nvim_set_option_value("wrap", false, { win = M.state.win })
   vim.api.nvim_set_option_value("cursorline", true, { win = M.state.win })
+  apply_line_highlights(buf, M.state.line_highlights)
   set_window_keymaps(buf)
 end
 
@@ -238,6 +276,9 @@ function M.close()
   M.state.on_expand = nil
   M.state.on_collapse = nil
   M.state.on_refresh = nil
+  M.state.key_actions = {}
+  M.state.line_highlights = {}
+  M.state.last_lines = nil
 end
 
 function M.get_state()

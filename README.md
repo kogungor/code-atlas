@@ -66,6 +66,7 @@ Local development with `lazy.nvim`:
 - `:CodeAtlasKnowledge [path|path=...] [format=json|jsonl] [include_tests=bool] [include_imports=bool] [include_types=bool] [include_external=bool]` build unified knowledge graph summary and optional snapshot
 - `:CodeAtlasArchitecture [include_tests=bool] [unknown_policy=allow|deny] [max_examples=N] [path=...] [format=json] [pretty=bool]` build architecture layer/domain report, dependency-rule violations, and optional JSON snapshot
 - `:CodeAtlasEvolution [limit=N] [hotspot_limit=N] [include_merges=bool] [since=...] [path=...] [out=...] [format=json|jsonl] [pretty=bool] [timeout_ms=N]` build git-based code evolution timeline and churn hotspots with optional snapshot export
+- `:CodeAtlasViewer [incoming|outgoing] [depth=N] [dynamic_only=bool] [kind=all|function|method] [filter=path_prefix] [search=query]` open advanced interactive project graph viewer
 - `:CodeAtlasUI tree|ascii` switch UI mode
 
 ## Main Configuration
@@ -119,6 +120,14 @@ require("code-atlas").setup({
     export_format = "json",
     export_pretty = true,
   },
+  viewer = {
+    depth_limit = 3,
+    direction = "outgoing",
+    dynamic_only = false,
+    node_kind = "all", -- "all" | "function" | "method"
+    filter_path_prefix = nil,
+    search_query = nil,
+  },
 })
 ```
 
@@ -135,6 +144,7 @@ require("code-atlas").setup({
 - Architecture report now includes severity scoring (`critical/high/medium/low`) for rule violations
 - Layer/domain inference is heuristic by default, but can be overridden via `architecture.*_prefix` and `architecture.*_top_dir`
 - Evolution report uses git churn heuristics and current index mapping for symbol/edge touch estimation
+- Interactive viewer adds focus/filter/search, node-kind filtering, search highlighting, and zoom/pan-style navigation over project graph data
 - Language coverage is best-effort and parser/query dependent
 - Large projects may need further performance guardrails/caching improvements
 

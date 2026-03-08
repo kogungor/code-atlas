@@ -502,6 +502,7 @@ function M.project_graph_document(index, subgraph)
       end
     end
     line_actions[root_line or 3] = {
+      symbol_id = root_symbol.id,
       target = {
         path = root_symbol.path,
         row = root_symbol.range[1],
@@ -581,6 +582,7 @@ function M.project_graph_document(index, subgraph)
     end
     lines[#lines + 1] = string.format("%s%s %s%s", indent, branch, symbol_label(symbol), edge_note)
     line_actions[#lines] = {
+      symbol_id = symbol_id,
       target = {
         path = symbol.path,
         row = symbol.range[1],
@@ -678,6 +680,41 @@ function M.dependency_graph_document(dep_graph, subgraph, opts)
   end
 
   append_node(subgraph.root_id, "", true, {})
+
+  return {
+    lines = lines,
+    line_actions = line_actions,
+  }
+end
+
+function M.interactive_viewer_document(index, subgraph, viewer_state)
+  viewer_state = viewer_state or {}
+  local base = M.project_graph_document(index, subgraph)
+  local lines = {
+    "code-atlas interactive viewer",
+    "",
+    string.format("focus_root: %s", tostring(viewer_state.focus_root or subgraph.root_id)),
+    string.format("depth_limit: %d", tonumber(viewer_state.depth_limit or subgraph.depth_limit) or 0),
+    string.format("filter_path: %s", tostring(viewer_state.filter_path_prefix or "")),
+    string.format("search: %s", tostring(viewer_state.search_query or "")),
+    string.format("dynamic_only: %s", tostring(viewer_state.dynamic_only == true)),
+    string.format("node_kind: %s", tostring(viewer_state.node_kind or "all")),
+    string.format("history: %d", tonumber(viewer_state.focus_history_size) or 0),
+    string.format("hidden_nodes: %d", tonumber(viewer_state.hidden_nodes) or 0),
+    string.format("total_nodes_before_filter: %d", tonumber(viewer_state.total_nodes) or 0),
+    "controls: f focus | F reset | / search | n/N next/prev | s filter-path | k node-kind | d dynamic | +/- zoom | H/L pan in/out | r refresh | q close",
+    "",
+  }
+
+  for _, line in ipairs(base.lines or {}) do
+    lines[#lines + 1] = line
+  end
+
+  local line_actions = {}
+  local offset = 13
+  for line_no, action in pairs(base.line_actions or {}) do
+    line_actions[line_no + offset] = action
+  end
 
   return {
     lines = lines,
