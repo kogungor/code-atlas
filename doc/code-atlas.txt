@@ -124,6 +124,11 @@ Default configuration:
       prefer_call_hierarchy = false,
       include_external = false,
     },
+    resolution = {
+      poly_score_window = 25,
+      poly_min_confidence = "medium",
+      max_poly_targets = 3,
+    },
     layout = {
       algorithm = "hierarchical",
       spacing_x = 220,
@@ -145,6 +150,9 @@ Fields:
   lsp.timeout_ms  Timeout for call hierarchy requests.
   lsp.prefer_call_hierarchy  Prefer LSP hierarchy for project graph commands.
   lsp.include_external  Include external library nodes in LSP graph output.
+  resolution.poly_score_window  Score gap from best to keep polymorphic targets.
+  resolution.poly_min_confidence  Minimum confidence to keep polymorphic targets.
+  resolution.max_poly_targets  Maximum targets kept per callsite.
   layout.algorithm  Graph layout metadata algorithm: "hierarchical" or "force".
   layout.spacing_x  Horizontal spacing used by hierarchical layout metadata.
   layout.spacing_y  Vertical spacing used by hierarchical layout metadata.
@@ -161,7 +169,7 @@ Fields:
 - Type-aware call resolution is partial (receiver-aware TS/JS method matching).
 - Receiver-aware heuristics include TS/JS/Lua and best-effort Python/Go/Rust.
 - Project graph includes mixed-source resolution preview with confidence labels.
-- Polymorphism modeling is not complete.
+- Polymorphic callsites are shown as dynamic edges with alternative targets (best-effort).
 - LSP call hierarchy availability depends on language server support.
 - Very large repositories may require stronger indexing guardrails.
 

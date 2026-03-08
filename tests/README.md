@@ -128,4 +128,10 @@ Run multi-language receiver disambiguation smoke test:
 nvim --headless --clean -u tests/minimal_init.lua +"luafile tests/headless/feature21_langs.lua" +qall
 ```
 
+Run polymorphism detection smoke test (Feature 22):
+
+```bash
+nvim --headless --clean -u tests/minimal_init.lua +"luafile tests/headless/feature22.lua" +qall
+```
+
 As features grow, add one file per feature in `tests/headless/` and keep each check fast.

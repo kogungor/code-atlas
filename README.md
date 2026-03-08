@@ -75,6 +75,11 @@ require("code-atlas").setup({
     prefer_call_hierarchy = false,
     include_external = false,
   },
+  resolution = {
+    poly_score_window = 25,      -- score gap from best to keep alt targets
+    poly_min_confidence = "medium", -- low|medium|high
+    max_poly_targets = 3,        -- cap alternatives per callsite
+  },
   layout = {
     algorithm = "hierarchical", -- "hierarchical" | "force"
   },
@@ -96,6 +101,7 @@ require("code-atlas").setup({
 - Type-aware call resolution is partial (receiver-aware for TS/JS method calls)
 - Receiver-aware heuristics now also include Python/Go/Rust patterns (best-effort)
 - Project graph now shows mixed-source resolution preview (`index`, `lsp`, `mixed(index+lsp)`) with confidence labels when available
+- Project graph now annotates polymorphic/dynamic call edges and alternative targets
 - Language coverage is best-effort and parser/query dependent
 - Large projects may need further performance guardrails/caching improvements
 

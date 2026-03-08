@@ -2,6 +2,7 @@ local M = {
   state = {
     index = nil,
     root = nil,
+    build_opts = {},
     autocmd_ready = false,
   },
 }
@@ -685,6 +686,121 @@ local function confidence_from_score(score)
   return "low"
 end
 
+local function confidence_rank(label)
+  local ranks = {
+    low = 1,
+    medium = 2,
+    high = 3,
+  }
+  return ranks[label] or 0
+end
+
+local function normalize_resolution_opts(opts)
+  opts = opts or {}
+  local out = {
+    poly_score_window = tonumber(opts.poly_score_window) or 25,
+    poly_min_confidence = tostring(opts.poly_min_confidence or "medium"):lower(),
+    max_poly_targets = math.max(1, math.floor(tonumber(opts.max_poly_targets) or 3)),
+  }
+
+  if out.poly_score_window < 0 then
+    out.poly_score_window = 0
+  end
+
+  if out.poly_min_confidence ~= "low" and out.poly_min_confidence ~= "medium" and out.poly_min_confidence ~= "high" then
+    out.poly_min_confidence = "medium"
+  end
+
+  return out
+end
+
+local function select_polymorphic_targets(candidates, call_kind, resolution_opts)
+  resolution_opts = normalize_resolution_opts(resolution_opts)
+  if not candidates or #candidates == 0 then
+    return {}
+  end
+
+  local pool = candidates
+  if call_kind == "member" then
+    local has_container = false
+    for _, candidate in ipairs(candidates) do
+      if candidate.container and candidate.container ~= "" then
+        has_container = true
+        break
+      end
+    end
+    if has_container then
+      local filtered = {}
+      for _, candidate in ipairs(candidates) do
+        if candidate.container and candidate.container ~= "" then
+          filtered[#filtered + 1] = candidate
+        end
+      end
+      if #filtered > 0 then
+        pool = filtered
+      end
+    end
+  end
+
+  local best = pool[1]
+  local best_score = tonumber(best.score) or 0
+  local min_score = best_score - resolution_opts.poly_score_window
+  local out = {}
+  local seen = {}
+
+  local function include(candidate)
+    if not candidate or not candidate.id then
+      return false
+    end
+    if seen[candidate.id] then
+      return false
+    end
+    seen[candidate.id] = true
+    out[#out + 1] = candidate
+    return true
+  end
+
+  include(best)
+
+  for i = 2, #pool do
+    local candidate = pool[i]
+    local score = tonumber(candidate.score) or 0
+    local conf = confidence_rank(candidate.confidence)
+    if #out >= resolution_opts.max_poly_targets then
+      break
+    end
+    if score >= min_score and conf >= confidence_rank(resolution_opts.poly_min_confidence) then
+      include(candidate)
+    end
+  end
+
+  return out
+end
+
+local function update_resolution_targets(item, index, resolution_opts)
+  local selected = select_polymorphic_targets(item.candidates or {}, item.call_kind, resolution_opts)
+  item.targets = selected
+  item.best = selected[1] or (item.candidates or {})[1]
+  item.polymorphic = #selected > 1
+  item.dynamic = item.polymorphic == true
+  item.unresolved = #selected == 0
+    or item.best == nil
+    or item.best.id == nil
+    or index.by_id[item.best.id] == nil
+end
+
+local function outgoing_ids_from_resolutions(resolutions, index)
+  local out = {}
+  for _, item in ipairs(resolutions or {}) do
+    for _, candidate in ipairs(item.targets or {}) do
+      if candidate.id and index.by_id[candidate.id] then
+        out[#out + 1] = candidate.id
+      end
+    end
+  end
+  return dedupe(out)
+end
+
 local function build_dependency_graph(symbols, outgoing, level)
   local nodes = {}
   local out = {}
@@ -756,7 +872,7 @@ end
 local function call_resolution_candidates(source_symbol, call, by_name)
   local call_name = call.name or call.raw
   local candidates = {}
-  local seen = {}
+  local candidate_by_id = {}
   local receiver = call.receiver_tail
   local receiver_type = nil
   if receiver and source_symbol.receiver_types then
@@ -766,8 +882,7 @@ local function call_resolution_candidates(source_symbol, call, by_name)
   for def_name, defs in pairs(by_name) do
     if names_match(call_name, def_name) then
       for _, def in ipairs(defs) do
-        if def.id ~= source_symbol.id and not seen[def.id] then
-          seen[def.id] = true
+        if def.id ~= source_symbol.id then
           local score = 0
           local reasons = {}
 
@@ -818,18 +933,28 @@ local function call_resolution_candidates(source_symbol, call, by_name)
             end
           end
 
-          candidates[#candidates + 1] = {
+          local next_candidate = {
             id = def.id,
             name = def.name,
             path = def.path,
+            container = def.container,
             source = "index",
             score = score,
             confidence = confidence_from_score(score),
             reasons = reasons,
           }
+
+          local prev = candidate_by_id[def.id]
+          if (not prev) or (next_candidate.score > (prev.score or 0)) then
+            candidate_by_id[def.id] = next_candidate
+          end
         end
       end
     end
+  end
+
+  for _, candidate in pairs(candidate_by_id) do
+    candidates[#candidates + 1] = candidate
   end
 
   table.sort(candidates, function(a, b)
@@ -845,8 +970,7 @@ local function call_resolution_candidates(source_symbol, call, by_name)
   return candidates
 end
 
-local function resolve_outgoing(symbol, by_name)
-  local ids = {}
+local function resolve_outgoing(symbol, by_name, resolution_opts)
   local resolutions = {}
 
   for _, call in ipairs(symbol.calls or {}) do
@@ -856,35 +980,44 @@ local function resolve_outgoing(symbol, by_name)
     end
     if call_obj then
       local candidates = call_resolution_candidates(symbol, call_obj, by_name)
-    local best = candidates[1]
 
     resolutions[#resolutions + 1] = {
       call = call_obj.raw,
       call_name = call_obj.name,
+      call_kind = call_obj.kind,
       receiver = call_obj.receiver,
       receiver_type = call_obj.receiver_tail and (symbol.receiver_types or {})[call_obj.receiver_tail] or nil,
-      unresolved = best == nil,
       candidates = candidates,
-      best = best,
+      best = nil,
+      targets = {},
+      polymorphic = false,
+      dynamic = false,
+      unresolved = true,
     }
-
-    if best then
-      ids[#ids + 1] = best.id
-    end
     end
   end
 
-  return dedupe(ids), resolutions
+  local temp_index = { by_id = {} }
+  for _, defs in pairs(by_name or {}) do
+    for _, def in ipairs(defs or {}) do
+      temp_index.by_id[def.id] = def
+    end
+  end
+  for _, item in ipairs(resolutions) do
+    update_resolution_targets(item, temp_index, resolution_opts)
+  end
+
+  return outgoing_ids_from_resolutions(resolutions, temp_index), resolutions
 end
 
-local function build_edges(symbols, by_name)
+local function build_edges(symbols, by_name, resolution_opts)
   local outgoing = {}
   local incoming = {}
   local call_resolutions = {}
   local unresolved_count = 0
 
   for _, symbol in ipairs(symbols) do
-    local out, resolutions = resolve_outgoing(symbol, by_name)
+    local out, resolutions = resolve_outgoing(symbol, by_name, resolution_opts)
     outgoing[symbol.id] = out
     incoming[symbol.id] = incoming[symbol.id] or {}
     call_resolutions[symbol.id] = resolutions
@@ -940,6 +1073,7 @@ local function lsp_index_candidates(index, source_symbol, lsp_candidates)
           id = symbol.id,
           name = symbol.name,
           path = symbol.path,
+          container = symbol.container,
           source = "mixed(index+lsp)",
           score = score,
           confidence = confidence_from_score(score),
@@ -1039,8 +1173,7 @@ function M.merge_lsp_candidates(index, source_symbol_id, lsp_candidates)
 
     sort_candidates(merged)
     item.candidates = merged
-    item.best = merged[1]
-    item.unresolved = item.best == nil or item.best.id == nil or index.by_id[item.best.id] == nil
+    update_resolution_targets(item, index, index.resolution_opts)
   end
 
   if not merged_any then
@@ -1048,13 +1181,7 @@ function M.merge_lsp_candidates(index, source_symbol_id, lsp_candidates)
   end
 
   local old_out = index.outgoing[source_symbol_id] or {}
-  local new_out = {}
-  for _, item in ipairs(resolutions) do
-    if item.best and item.best.id and index.by_id[item.best.id] then
-      new_out[#new_out + 1] = item.best.id
-    end
-  end
-  new_out = dedupe(new_out)
+  local new_out = outgoing_ids_from_resolutions(resolutions, index)
   index.outgoing[source_symbol_id] = new_out
 
   local old_set = {}
@@ -1149,7 +1276,9 @@ local function build_import_graph(root, files)
   }
 end
 
-local function build_index(root)
+local function build_index(root, build_opts)
+  build_opts = build_opts or {}
+  local resolution_opts = normalize_resolution_opts(build_opts.resolution)
   local symbols = {}
   local files = project_files(root)
 
@@ -1165,7 +1294,7 @@ local function build_index(root)
   end
 
   local by_name, by_path, by_id = build_maps(symbols)
-  local outgoing, incoming, call_resolutions, unresolved_count = build_edges(symbols, by_name)
+  local outgoing, incoming, call_resolutions, unresolved_count = build_edges(symbols, by_name, resolution_opts)
   local module_graph = build_dependency_graph(symbols, outgoing, "module")
   local package_graph = build_dependency_graph(symbols, outgoing, "package")
 
@@ -1184,6 +1313,7 @@ local function build_index(root)
     incoming = incoming,
     call_resolutions = call_resolutions,
     unresolved_count = unresolved_count,
+    resolution_opts = resolution_opts,
     module_graph = module_graph,
     package_graph = package_graph,
     import_graph = import_graph,
@@ -1259,10 +1389,14 @@ end
 function M.build(opts)
   opts = opts or {}
   local root = normalize_path(opts.root or vim.fn.getcwd())
+  local build_opts = {
+    resolution = normalize_resolution_opts(opts.resolution),
+  }
 
-  local index = build_index(root)
+  local index = build_index(root, build_opts)
   M.state.index = index
   M.state.root = root
+  M.state.build_opts = build_opts
   ensure_autocmd()
 
   return index, nil
@@ -1274,8 +1408,20 @@ function M.refresh(opts)
     return M.build(opts)
   end
 
-  local index = build_index(M.state.root)
+  local effective_build_opts = vim.tbl_deep_extend(
+    "force",
+    vim.deepcopy(M.state.build_opts or {}),
+    {
+      resolution = opts.resolution and normalize_resolution_opts(opts.resolution) or nil,
+    }
+  )
+  if not effective_build_opts.resolution then
+    effective_build_opts.resolution = normalize_resolution_opts()
+  end
+
+  local index = build_index(M.state.root, effective_build_opts)
   M.state.index = index
+  M.state.build_opts = effective_build_opts
 
   if not opts.silent then
     vim.notify(

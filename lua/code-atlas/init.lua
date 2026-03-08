@@ -163,6 +163,12 @@ function M.pick_with_telescope()
 end
 
 function M.build_project_index(opts)
+  opts = opts or {}
+  local config = require("code-atlas.config").get()
+  if opts.resolution == nil then
+    opts.resolution = vim.deepcopy(config.resolution or {})
+  end
+
   local index, err = require("code-atlas.index").build(opts)
   if not index then
     vim.notify("code-atlas: failed to build project index: " .. tostring(err), vim.log.levels.ERROR)
@@ -182,7 +188,10 @@ function M.build_project_index(opts)
 end
 
 function M.refresh_project_index()
-  local index, err = require("code-atlas.index").refresh()
+  local config = require("code-atlas.config").get()
+  local index, err = require("code-atlas.index").refresh({
+    resolution = vim.deepcopy(config.resolution or {}),
+  })
   if not index then
     vim.notify("code-atlas: failed to refresh project index: " .. tostring(err), vim.log.levels.ERROR)
     return nil, err
