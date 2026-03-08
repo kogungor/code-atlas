@@ -8,6 +8,11 @@ M.defaults = {
     prefer_call_hierarchy = false,
     include_external = false,
   },
+  resolution = {
+    poly_score_window = 25,
+    poly_min_confidence = "medium",
+    max_poly_targets = 3,
+  },
   layout = {
     algorithm = "hierarchical",
     spacing_x = 220,

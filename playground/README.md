@@ -64,6 +64,16 @@ nvim --clean -u playground/minimal_init.lua playground/samples/go_method_resolut
 nvim --clean -u playground/minimal_init.lua playground/samples/rust_method_resolution.rs
 ```
 
+For polymorphic callsite behavior testing, open:
+
+```bash
+nvim --clean -u playground/minimal_init.lua playground/samples/lua_polymorphic.lua
+```
+
+Suggested cursor position:
+
+- `calculate_dynamic` to see one callsite fan out to multiple targets
+
 ## Workflow for each new feature
 
 1. Add or update a sample file in `playground/samples/`.

@@ -482,6 +482,7 @@ function M.project_graph_document(index, subgraph)
     string.format("layout: %s", layout_algo),
     string.format("depth_limit: %d", subgraph.depth_limit),
     string.format("nodes: %d, edges: %d", node_count, edge_count),
+    string.format("polymorphic_calls: %d", tonumber(subgraph.polymorphic_calls) or 0),
     string.format("unresolved_calls: %d", unresolved_scoped),
     string.format("unresolved_calls_global: %d", index.unresolved_count or 0),
     "",
@@ -513,14 +514,31 @@ function M.project_graph_document(index, subgraph)
   local resolution_lines = {}
   for _, item in ipairs(root_resolutions) do
     local best = item.best
+    local poly_suffix = ""
+    if item.polymorphic and item.targets then
+      poly_suffix = string.format(" [poly:%d]", #item.targets)
+    end
     if best then
       resolution_lines[#resolution_lines + 1] = string.format(
-        "  - %s -> %s [%s|%s]",
+        "  - %s -> %s [%s|%s]%s",
         tostring(item.call_name or item.call),
         tostring(best.name),
         tostring(best.source or "index"),
-        tostring(best.confidence or "unknown")
+        tostring(best.confidence or "unknown"),
+        poly_suffix
       )
+      if item.polymorphic and item.targets then
+        for idx, target in ipairs(item.targets) do
+          if idx > 1 then
+            resolution_lines[#resolution_lines + 1] = string.format(
+              "      alt -> %s [%s|%s]",
+              tostring(target.name),
+              tostring(target.source or "index"),
+              tostring(target.confidence or "unknown")
+            )
+          end
+        end
+      end
     else
       resolution_lines[#resolution_lines + 1] = string.format("  - %s -> (unresolved)", tostring(item.call_name or item.call))
     end
@@ -554,7 +572,14 @@ function M.project_graph_document(index, subgraph)
     next_path[symbol_id] = true
 
     local branch = is_last and "└─" or "├─"
-    lines[#lines + 1] = string.format("%s%s %s", indent, branch, symbol_label(symbol))
+    local edge_note = ""
+    if path.__parent_id then
+      local ann = (((subgraph.edge_annotations or {})[path.__parent_id] or {})[symbol_id])
+      if ann and ann.dynamic then
+        edge_note = " [dynamic]"
+      end
+    end
+    lines[#lines + 1] = string.format("%s%s %s%s", indent, branch, symbol_label(symbol), edge_note)
     line_actions[#lines] = {
       target = {
         path = symbol.path,
@@ -565,6 +590,7 @@ function M.project_graph_document(index, subgraph)
 
     local children = subgraph.adjacency[symbol_id] or {}
     local child_indent = indent .. (is_last and "   " or "│  ")
+    next_path.__parent_id = symbol_id
     for idx, child_id in ipairs(children) do
       append_node(child_id, child_indent, idx == #children, next_path)
     end

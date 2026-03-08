@@ -76,9 +76,13 @@ local function collect_payload(index, subgraph, layout)
     table.sort(children)
     for _, target_id in ipairs(children) do
       if subgraph.nodes[source_id] and subgraph.nodes[target_id] then
+        local annotation = (((subgraph.edge_annotations or {})[source_id] or {})[target_id]) or {}
         edges[#edges + 1] = {
           source = source_id,
           target = target_id,
+          dynamic = annotation.dynamic == true,
+          polymorphic = annotation.polymorphic == true,
+          calls = annotation.calls or {},
         }
       end
     end
@@ -92,6 +96,7 @@ local function collect_payload(index, subgraph, layout)
       depth_limit = subgraph.depth_limit,
       root_id = subgraph.root_id,
       layout_algorithm = layout.algorithm,
+      polymorphic_calls = tonumber(subgraph.polymorphic_calls) or 0,
     },
     nodes = nodes,
     edges = edges,

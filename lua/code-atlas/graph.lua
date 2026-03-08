@@ -112,6 +112,7 @@ function M.project_subgraph(index, root_id, opts)
   local edges = direction == "incoming" and index.incoming or index.outgoing
   local nodes = {}
   local adjacency = {}
+  local edge_annotations = {}
   local queue = {
     { id = root_id, depth = 0 },
   }
@@ -137,12 +138,41 @@ function M.project_subgraph(index, root_id, opts)
     end
   end
 
+  local polymorphic_calls = 0
+  local call_resolutions = index.call_resolutions or {}
+  for source_id, _ in pairs(nodes) do
+    for _, entry in ipairs(call_resolutions[source_id] or {}) do
+      if entry.polymorphic and (entry.targets and #entry.targets > 1) then
+        local linked = 0
+        edge_annotations[source_id] = edge_annotations[source_id] or {}
+        for _, target in ipairs(entry.targets) do
+          if target.id and nodes[target.id] then
+            linked = linked + 1
+            edge_annotations[source_id][target.id] = edge_annotations[source_id][target.id] or {
+              dynamic = true,
+              polymorphic = true,
+              calls = {},
+            }
+            edge_annotations[source_id][target.id].calls[#edge_annotations[source_id][target.id].calls + 1] = entry.call_name
+              or entry.call
+              or "<call>"
+          end
+        end
+        if linked > 1 then
+          polymorphic_calls = polymorphic_calls + 1
+        end
+      end
+    end
+  end
+
   return {
     root_id = root_id,
     depth_limit = depth_limit,
     direction = direction,
     nodes = nodes,
     adjacency = adjacency,
+    edge_annotations = edge_annotations,
+    polymorphic_calls = polymorphic_calls,
   }
 end
 
