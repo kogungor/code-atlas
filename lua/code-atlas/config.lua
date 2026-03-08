@@ -1,0 +1,24 @@
+local M = {}
+
+M.defaults = {
+  depth_limit = 2,
+  ui = {
+    border = "rounded",
+    max_width = 0.8,
+    max_height = 0.8,
+    mode = "tree",
+  },
+}
+
+M.options = vim.deepcopy(M.defaults)
+
+function M.setup(opts)
+  M.options = vim.tbl_deep_extend("force", vim.deepcopy(M.defaults), opts or {})
+  return M.options
+end
+
+function M.get()
+  return M.options
+end
+
+return M
