@@ -446,11 +446,19 @@ function M.project_graph_document(index, subgraph)
 
   local node_count = 0
   local edge_count = 0
+  local unresolved_scoped = 0
   for _, _ in pairs(subgraph.nodes or {}) do
     node_count = node_count + 1
   end
   for _, children in pairs(subgraph.adjacency or {}) do
     edge_count = edge_count + #children
+  end
+  for symbol_id, _ in pairs(subgraph.nodes or {}) do
+    for _, item in ipairs(((index.call_resolutions or {})[symbol_id]) or {}) do
+      if item.unresolved then
+        unresolved_scoped = unresolved_scoped + 1
+      end
+    end
   end
 
   local direction = subgraph.direction or "outgoing"
@@ -474,7 +482,8 @@ function M.project_graph_document(index, subgraph)
     string.format("layout: %s", layout_algo),
     string.format("depth_limit: %d", subgraph.depth_limit),
     string.format("nodes: %d, edges: %d", node_count, edge_count),
-    string.format("unresolved_calls: %d", index.unresolved_count or 0),
+    string.format("unresolved_calls: %d", unresolved_scoped),
+    string.format("unresolved_calls_global: %d", index.unresolved_count or 0),
     "",
     string.format("%s:", relation_label),
   }
@@ -498,6 +507,35 @@ function M.project_graph_document(index, subgraph)
         col = root_symbol.range[2],
       },
     }
+  end
+
+  local root_resolutions = ((index.call_resolutions or {})[subgraph.root_id]) or {}
+  local resolution_lines = {}
+  for _, item in ipairs(root_resolutions) do
+    local best = item.best
+    if best then
+      resolution_lines[#resolution_lines + 1] = string.format(
+        "  - %s -> %s [%s|%s]",
+        tostring(item.call_name or item.call),
+        tostring(best.name),
+        tostring(best.source or "index"),
+        tostring(best.confidence or "unknown")
+      )
+    else
+      resolution_lines[#resolution_lines + 1] = string.format("  - %s -> (unresolved)", tostring(item.call_name or item.call))
+    end
+  end
+
+  if #resolution_lines > 0 then
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "resolution_candidates:"
+    local preview_limit = math.min(8, #resolution_lines)
+    for i = 1, preview_limit do
+      lines[#lines + 1] = resolution_lines[i]
+    end
+    if #resolution_lines > preview_limit then
+      lines[#lines + 1] = string.format("  ... (%d more)", #resolution_lines - preview_limit)
+    end
   end
 
   local function append_node(symbol_id, indent, is_last, path)
