@@ -98,4 +98,10 @@ Run interactive tree UI smoke test (Feature 17):
 nvim --headless --clean -u tests/minimal_init.lua +"luafile tests/headless/feature17.lua" +qall
 ```
 
+Run graph export smoke test (Feature 18):
+
+```bash
+nvim --headless --clean -u tests/minimal_init.lua +"luafile tests/headless/feature18.lua" +qall
+```
+
 As features grow, add one file per feature in `tests/headless/` and keep each check fast.

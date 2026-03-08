@@ -58,6 +58,7 @@ Local development with `lazy.nvim`:
 - `:CodeAtlasImportReverseGraph` reverse import graph (dependents)
 - `:CodeAtlasDeadCode` dead function report
 - `:CodeAtlasImpact` impact analysis for function under cursor
+- `:CodeAtlasExport [format] [path] [incoming|outgoing] [depth=N]` export project graph for symbol under cursor
 - `:CodeAtlasUI tree|ascii` switch UI mode
 
 ## Main Configuration

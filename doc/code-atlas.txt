@@ -83,6 +83,10 @@ Example using Lua setup:
 - :CodeAtlasImpact
     Show direct/transitive caller impact for current symbol.
 
+- :CodeAtlasExport [format] [path] [incoming|outgoing] [depth=N]
+    Export project graph for current symbol. Format supports json, graphviz
+    (dot), and mermaid. Path defaults to the current working directory.
+
 - :CodeAtlasUI tree|ascii
     Switch graph UI mode.
 

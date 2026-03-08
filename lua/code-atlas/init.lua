@@ -442,6 +442,135 @@ function M.run_impact_analysis()
   })
 end
 
+local function parse_export_args(raw_args)
+  local out = {
+    format = nil,
+    path = nil,
+    direction = "outgoing",
+    depth = nil,
+  }
+
+  for _, token in ipairs(raw_args or {}) do
+    local key, value = token:match("^([%w_]+)=(.+)$")
+    if key then
+      key = key:lower()
+      if key == "format" then
+        out.format = value
+      elseif key == "path" then
+        out.path = value
+      elseif key == "direction" then
+        out.direction = value
+      elseif key == "depth" then
+        out.depth = tonumber(value)
+      else
+        return nil, "unknown option: " .. key
+      end
+    elseif token == "incoming" or token == "outgoing" then
+      out.direction = token
+    elseif not out.format then
+      out.format = token
+    elseif not out.path then
+      out.path = token
+    else
+      return nil, "unexpected argument: " .. token
+    end
+  end
+
+  if out.direction ~= "incoming" and out.direction ~= "outgoing" then
+    return nil, "direction must be incoming or outgoing"
+  end
+
+  return out, nil
+end
+
+local function default_export_path(root_symbol, format)
+  local export = require("code-atlas.export")
+  local ext = export.default_extension(format)
+  local stem = (root_symbol.name or "graph"):gsub("[^%w_%-]", "_")
+  if stem == "" then
+    stem = "graph"
+  end
+  return vim.fs.joinpath(vim.fn.getcwd(), string.format("code-atlas-%s.%s", stem, ext))
+end
+
+function M.run_graph_export(raw_args)
+  local export = require("code-atlas.export")
+  local index_mod = require("code-atlas.index")
+  local graph = require("code-atlas.graph")
+  local config = require("code-atlas.config").get()
+
+  local args, args_err = parse_export_args(raw_args)
+  if not args then
+    vim.notify("code-atlas: export failed: " .. tostring(args_err), vim.log.levels.ERROR)
+    return nil, args_err
+  end
+
+  local format = export.normalize_format(args.format or "json")
+  if not format then
+    vim.notify("code-atlas: export failed: unsupported format", vim.log.levels.ERROR)
+    return nil, "unsupported format"
+  end
+
+  local index = index_mod.get()
+  if not index then
+    index = M.build_project_index({ root = vim.fn.getcwd() })
+  end
+  if not index then
+    vim.notify("code-atlas: project index is unavailable", vim.log.levels.ERROR)
+    return nil, "project index unavailable"
+  end
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  local path = vim.fs.normalize(vim.api.nvim_buf_get_name(bufnr))
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local row = cursor[1] - 1
+  local col = cursor[2]
+
+  local root_symbol = index_mod.find_symbol_at(index, path, row, col)
+  if not root_symbol then
+    vim.notify("code-atlas: no indexed function under cursor", vim.log.levels.WARN)
+    return nil, "no indexed function under cursor"
+  end
+
+  local depth = args.depth
+  if depth == nil then
+    depth = config.depth_limit
+  end
+
+  local subgraph = graph.project_subgraph(index, root_symbol.id, {
+    depth_limit = depth,
+    direction = args.direction,
+  })
+
+  local export_path = args.path
+  if not export_path or export_path == "" then
+    export_path = default_export_path(root_symbol, format)
+  end
+
+  local result, export_err = export.export_subgraph(index, subgraph, {
+    format = format,
+    path = vim.fs.normalize(export_path),
+  })
+
+  if not result then
+    vim.notify("code-atlas: export failed: " .. tostring(export_err), vim.log.levels.ERROR)
+    return nil, export_err
+  end
+
+  vim.notify(
+    string.format(
+      "code-atlas: exported %d nodes/%d edges to %s (%s)",
+      result.node_count,
+      result.edge_count,
+      result.path,
+      result.format
+    ),
+    vim.log.levels.INFO
+  )
+
+  return result, nil
+end
+
 function M.set_ui_mode(mode)
   mode = (mode or ""):lower()
   if mode ~= "tree" and mode ~= "ascii" then
@@ -531,6 +660,23 @@ function M.create_user_commands()
     M.run_impact_analysis()
   end, {
     desc = "Analyze impact if current function changes or is removed",
+  })
+
+  vim.api.nvim_create_user_command("CodeAtlasExport", function(args)
+    M.run_graph_export(args.fargs)
+  end, {
+    nargs = "*",
+    complete = function(_, cmdline)
+      local has_format = cmdline:find("%f[%w]json%f[%W]")
+        or cmdline:find("%f[%w]mermaid%f[%W]")
+        or cmdline:find("%f[%w]graphviz%f[%W]")
+        or cmdline:find("%f[%w]dot%f[%W]")
+      if not has_format then
+        return { "json", "graphviz", "mermaid", "incoming", "outgoing" }
+      end
+      return { "path=", "direction=outgoing", "direction=incoming", "depth=" }
+    end,
+    desc = "Export project graph (json|graphviz|mermaid)",
   })
 
   vim.api.nvim_create_user_command("CodeAtlasUI", function(args)
