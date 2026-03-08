@@ -844,8 +844,16 @@ function M.architecture_graph_document(report)
     string.format("groups: %d", #(report.group_ids or {})),
     string.format("dependencies: %d", tonumber(report.dependency_count) or 0),
     string.format("violations: %d", tonumber(report.violation_count) or 0),
+    string.format(
+      "severity: critical=%d high=%d medium=%d low=%d",
+      tonumber(((report.severity_counts or {}).critical) or 0),
+      tonumber(((report.severity_counts or {}).high) or 0),
+      tonumber(((report.severity_counts or {}).medium) or 0),
+      tonumber(((report.severity_counts or {}).low) or 0)
+    ),
     string.format("include_tests: %s", tostring(((report.options or {}).include_tests) == true)),
     string.format("unknown_layer_policy: %s", tostring((report.options or {}).unknown_layer_policy or "allow")),
+    string.format("rules_mode: %s", tostring((report.options or {}).rules_mode or "merge")),
     "",
     "layers:",
   }
@@ -905,7 +913,9 @@ function M.architecture_graph_document(report)
       local src = (report.groups or {})[item.source_group_id]
       local dst = (report.groups or {})[item.target_group_id]
       lines[#lines + 1] = string.format(
-        "  - %s -> %s (%d edges)",
+        "  - [%s:%d] %s -> %s (%d edges)",
+        tostring(item.severity or "low"),
+        tonumber(item.severity_score) or 0,
         src and src.label or item.source_group_id,
         dst and dst.label or item.target_group_id,
         tonumber(item.count) or 0
@@ -930,6 +940,93 @@ function M.architecture_graph_document(report)
           }
         end
       end
+    end
+  end
+
+  return {
+    lines = lines,
+    line_actions = line_actions,
+  }
+end
+
+function M.code_evolution_document(report)
+  local lines = {
+    "code-atlas evolution graph",
+    "",
+    string.format("root: %s", tostring(report.root or "")),
+    string.format("generated_at: %s", tostring(report.generated_at or "")),
+    string.format("commits: %d", tonumber(report.commits_count) or 0),
+    string.format("insertions: %d", tonumber(((report.totals or {}).insertions) or 0)),
+    string.format("deletions: %d", tonumber(((report.totals or {}).deletions) or 0)),
+    string.format("churn: %d", tonumber(((report.totals or {}).churn) or 0)),
+    string.format("options.limit: %s", tostring(((report.options or {}).limit))),
+    string.format("options.since: %s", tostring(((report.options or {}).since) or "")),
+    string.format("options.path: %s", tostring(((report.options or {}).path) or "")),
+    "",
+    "timeline:",
+  }
+  local line_actions = {}
+
+  if not report.timeline or #report.timeline == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, item in ipairs(report.timeline) do
+      lines[#lines + 1] = string.format(
+        "  - %s %s +%d/-%d files=%d symbols=%d edges=%d %s",
+        tostring(item.date or ""),
+        tostring(item.short_hash or ""),
+        tonumber(item.insertions) or 0,
+        tonumber(item.deletions) or 0,
+        tonumber(item.files_count) or 0,
+        tonumber(item.touched_symbols) or 0,
+        tonumber(item.touched_edges) or 0,
+        tostring(item.subject or "")
+      )
+    end
+  end
+
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "hotspots_files:"
+  if not report.hotspots or not report.hotspots.files or #report.hotspots.files == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, item in ipairs(report.hotspots.files) do
+      lines[#lines + 1] = string.format(
+        "  - %s churn=%d touches=%d",
+        tostring(item.path),
+        tonumber(item.churn) or 0,
+        tonumber(item.touches) or 0
+      )
+      line_actions[#lines] = {
+        target = {
+          path = vim.fs.joinpath(report.root, tostring(item.path)),
+          row = 0,
+          col = 0,
+        },
+      }
+    end
+  end
+
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "hotspots_symbols:"
+  if not report.hotspots or not report.hotspots.symbols or #report.hotspots.symbols == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, item in ipairs(report.hotspots.symbols) do
+      lines[#lines + 1] = string.format(
+        "  - %s - %s touches=%d churn=%d",
+        tostring(item.name),
+        tostring(item.relpath or item.path),
+        tonumber(item.touches) or 0,
+        tonumber(item.churn) or 0
+      )
+      line_actions[#lines] = {
+        target = {
+          path = item.path,
+          row = item.range[1],
+          col = item.range[2],
+        },
+      }
     end
   end
 

@@ -113,6 +113,18 @@ Example using Lua setup:
     violations with example callsites. If path is provided, write a JSON
     snapshot.
 
+- :CodeAtlasEvolution [limit=N]
+                      [hotspot_limit=N]
+                      [include_merges=bool]
+                      [since=...]
+                      [path=...]
+                      [out=...]
+                      [format=json|jsonl]
+                      [pretty=bool]
+                      [timeout_ms=N]
+    Show git-based evolution timeline with commit churn and file/symbol
+    hotspots. If out is provided, write a snapshot.
+
 - :CodeAtlasUI tree|ascii
     Switch graph UI mode.
 
@@ -163,6 +175,25 @@ Default configuration:
       max_violation_examples = 3,
       export_format = "json",
       export_pretty = true,
+      layer_by_top_dir = { tests = "test" },
+      layer_by_path_prefix = {},
+      layer_by_module_prefix = {},
+      domain_by_top_dir = {},
+      domain_by_path_prefix = {},
+      domain_path_segment = 2,
+      rules = {},
+      rules_mode = "merge",
+      severity_thresholds = { critical = 90, high = 70, medium = 55 },
+    },
+    evolution = {
+      limit = 30,
+      hotspot_limit = 10,
+      include_merges = false,
+      since = nil,
+      path = nil,
+      timeout_ms = 5000,
+      export_format = "json",
+      export_pretty = true,
     },
   }
 <
@@ -189,6 +220,23 @@ Fields:
   architecture.max_violation_examples  Max violation examples per edge.
   architecture.export_format  Snapshot format for architecture report.
   architecture.export_pretty  Pretty-print architecture snapshot output.
+  architecture.layer_by_top_dir  Top-directory to layer override map.
+  architecture.layer_by_path_prefix  Path-prefix to layer override map.
+  architecture.layer_by_module_prefix  Module-prefix to layer override map.
+  architecture.domain_by_top_dir  Top-directory to domain override map.
+  architecture.domain_by_path_prefix  Path-prefix to domain override map.
+  architecture.domain_path_segment  Path segment index used for domain grouping.
+  architecture.rules  Layer dependency rule overrides.
+  architecture.rules_mode  "merge" to extend defaults, "replace" for full custom rules.
+  architecture.severity_thresholds  Thresholds for violation severity buckets.
+  evolution.limit  Number of commits to analyze.
+  evolution.hotspot_limit  Number of hotspot items in each section.
+  evolution.include_merges  Include merge commits in timeline.
+  evolution.since  Git log since-range expression.
+  evolution.path  Optional path filter for git history.
+  evolution.timeout_ms  Timeout for git history command.
+  evolution.export_format  Snapshot format for evolution report.
+  evolution.export_pretty  Pretty-print evolution snapshot output.
 
 ==============================================================================
 6. Limitations                                                *code-atlas-limitations*
@@ -201,6 +249,8 @@ Fields:
 - LSP call hierarchy availability depends on language server support.
 - Very large repositories may require stronger indexing guardrails.
 - Architecture layer grouping is heuristic and may need project-specific tuning.
+- Violation severity is heuristic and should be calibrated per project.
+- Evolution hotspots are heuristic and based on git churn + current index mapping.
 
 ==============================================================================
 vim:tw=78:ts=8:ft=help:norl:

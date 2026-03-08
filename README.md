@@ -65,6 +65,7 @@ Local development with `lazy.nvim`:
 - `:CodeAtlasExport [format] [path] [incoming|outgoing] [depth=N] [layout=hierarchical|force]` export project graph for symbol under cursor
 - `:CodeAtlasKnowledge [path|path=...] [format=json|jsonl] [include_tests=bool] [include_imports=bool] [include_types=bool] [include_external=bool]` build unified knowledge graph summary and optional snapshot
 - `:CodeAtlasArchitecture [include_tests=bool] [unknown_policy=allow|deny] [max_examples=N] [path=...] [format=json] [pretty=bool]` build architecture layer/domain report, dependency-rule violations, and optional JSON snapshot
+- `:CodeAtlasEvolution [limit=N] [hotspot_limit=N] [include_merges=bool] [since=...] [path=...] [out=...] [format=json|jsonl] [pretty=bool] [timeout_ms=N]` build git-based code evolution timeline and churn hotspots with optional snapshot export
 - `:CodeAtlasUI tree|ascii` switch UI mode
 
 ## Main Configuration
@@ -98,6 +99,25 @@ require("code-atlas").setup({
     max_violation_examples = 3,
     export_format = "json",
     export_pretty = true,
+    layer_by_top_dir = { tests = "test" },
+    layer_by_path_prefix = {},
+    layer_by_module_prefix = {},
+    domain_by_top_dir = {},
+    domain_by_path_prefix = {},
+    domain_path_segment = 2,
+    rules = {},
+    rules_mode = "merge", -- "merge" | "replace"
+    severity_thresholds = { critical = 90, high = 70, medium = 55 },
+  },
+  evolution = {
+    limit = 30,
+    hotspot_limit = 10,
+    include_merges = false,
+    since = nil,
+    path = nil,
+    timeout_ms = 5000,
+    export_format = "json",
+    export_pretty = true,
   },
 })
 ```
@@ -112,7 +132,9 @@ require("code-atlas").setup({
 - Receiver-aware heuristics now also include Python/Go/Rust patterns (best-effort)
 - Project graph now shows mixed-source resolution preview (`index`, `lsp`, `mixed(index+lsp)`) with confidence labels when available
 - Project graph now annotates polymorphic/dynamic call edges and alternative targets
-- Architecture report uses heuristic layer inference and default dependency rules; tune with command flags as needed
+- Architecture report now includes severity scoring (`critical/high/medium/low`) for rule violations
+- Layer/domain inference is heuristic by default, but can be overridden via `architecture.*_prefix` and `architecture.*_top_dir`
+- Evolution report uses git churn heuristics and current index mapping for symbol/edge touch estimation
 - Language coverage is best-effort and parser/query dependent
 - Large projects may need further performance guardrails/caching improvements
 
