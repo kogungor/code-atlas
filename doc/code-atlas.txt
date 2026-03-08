@@ -1,0 +1,132 @@
+*code-atlas.txt*   code-atlas.nvim help   Last change: 2026-03-08
+
+==============================================================================
+code-atlas                                                     *code-atlas*
+
+code-atlas is a Neovim plugin for call graph and dependency analysis.
+
+Core goals:
+  - local function call exploration
+  - project-wide caller/callee visibility
+  - dependency graph and impact analysis workflows
+
+==============================================================================
+Contents                                                      *code-atlas-contents*
+
+1. Requirements ......................... |code-atlas-requirements|
+2. Setup ................................ |code-atlas-setup|
+3. Commands ............................. |code-atlas-commands|
+4. Keymaps in graph windows ............. |code-atlas-keymaps|
+5. Configuration .........................|code-atlas-config|
+6. Limitations .......................... |code-atlas-limitations|
+
+==============================================================================
+1. Requirements                                               *code-atlas-requirements*
+
+- Neovim >= 0.10
+- Tree-sitter parsers for supported languages
+- Optional: telescope.nvim for picker integration
+
+==============================================================================
+2. Setup                                                      *code-atlas-setup*
+
+Example using Lua setup:
+
+>
+  require("code-atlas").setup({
+    depth_limit = 2,
+    ui = {
+      mode = "tree",
+      border = "rounded",
+      max_width = 0.8,
+      max_height = 0.8,
+    },
+  })
+<
+
+==============================================================================
+3. Commands                                                   *code-atlas-commands*
+
+- :CodeAtlas
+    Open local call graph for function under cursor.
+
+- :CodeAtlasPick
+    Open Telescope picker for local functions (requires telescope.nvim).
+
+- :CodeAtlasIndex
+    Build project-wide function index.
+
+- :CodeAtlasIndexRefresh
+    Refresh project index.
+
+- :CodeAtlasProjectGraph
+    Show project call graph (callees) from symbol under cursor.
+
+- :CodeAtlasProjectReverseGraph
+    Show reverse project call graph (callers) from symbol under cursor.
+
+- :CodeAtlasModuleGraph
+    Show module dependency graph rooted at current symbol module.
+
+- :CodeAtlasPackageGraph
+    Show package dependency graph rooted at current symbol package.
+
+- :CodeAtlasImportGraph
+    Show file import graph rooted at current file.
+
+- :CodeAtlasImportReverseGraph
+    Show reverse import graph (dependent files) for current file.
+
+- :CodeAtlasDeadCode
+    Show functions with zero incoming callers.
+
+- :CodeAtlasImpact
+    Show direct/transitive caller impact for current symbol.
+
+- :CodeAtlasUI tree|ascii
+    Switch graph UI mode.
+
+==============================================================================
+4. Keymaps in graph windows                                   *code-atlas-keymaps*
+
+- <CR>, o   Jump to selected target
+- l, <Right>  Expand node
+- h, <Left>   Collapse node
+- <Tab>       Toggle node expand/collapse
+- r           Refresh current view
+- q, <Esc>    Close window
+
+==============================================================================
+5. Configuration                                              *code-atlas-config*
+
+Default configuration:
+
+>
+  {
+    depth_limit = 2,
+    ui = {
+      mode = "tree",
+      border = "rounded",
+      max_width = 0.8,
+      max_height = 0.8,
+    },
+  }
+<
+
+Fields:
+  depth_limit   Maximum traversal depth in graph views.
+  ui.mode       "tree" (interactive) or "ascii" (fallback).
+  ui.border     Floating window border style.
+  ui.max_width  Max floating width ratio of editor columns.
+  ui.max_height Max floating height ratio of editor lines.
+
+==============================================================================
+6. Limitations                                                *code-atlas-limitations*
+
+- Cross-file resolution is currently heuristic name matching.
+- Type-aware call resolution and polymorphism modeling are not complete.
+- LSP call hierarchy integration is not added yet.
+- Very large repositories may require stronger indexing guardrails.
+
+==============================================================================
+vim:tw=78:ts=8:ft=help:norl:

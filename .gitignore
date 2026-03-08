@@ -1,0 +1,29 @@
+# OS files
+.DS_Store
+
+# Editor and IDE
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Neovim plugin test and cache artifacts
+.luacov
+.luacov.*
+coverage/
+tmp/
+
+# Build or generated graph outputs
+dist/
+build/
+*.dot
+*.svg
+*.png
+*.jsonl
+
+# Dependency directories (if used for local tooling)
+node_modules/
+
+# Generated Vim help tags
+doc/tags
