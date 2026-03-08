@@ -835,4 +835,108 @@ function M.knowledge_graph_document(graph)
   }
 end
 
+function M.architecture_graph_document(report)
+  local lines = {
+    "code-atlas architecture graph",
+    "",
+    string.format("root: %s", tostring(report.root or "")),
+    string.format("generated_at: %s", tostring(report.generated_at or "")),
+    string.format("groups: %d", #(report.group_ids or {})),
+    string.format("dependencies: %d", tonumber(report.dependency_count) or 0),
+    string.format("violations: %d", tonumber(report.violation_count) or 0),
+    string.format("include_tests: %s", tostring(((report.options or {}).include_tests) == true)),
+    string.format("unknown_layer_policy: %s", tostring((report.options or {}).unknown_layer_policy or "allow")),
+    "",
+    "layers:",
+  }
+  local line_actions = {}
+
+  local layer_keys = {}
+  for layer, _ in pairs(report.layer_counts or {}) do
+    layer_keys[#layer_keys + 1] = layer
+  end
+  table.sort(layer_keys)
+  if #layer_keys == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, layer in ipairs(layer_keys) do
+      lines[#lines + 1] = string.format("  - %s: %d groups", layer, tonumber((report.layer_counts or {})[layer]) or 0)
+    end
+  end
+
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "groups:"
+
+  if not report.group_ids or #report.group_ids == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, group_id in ipairs(report.group_ids) do
+      local group = (report.groups or {})[group_id]
+      if group then
+        lines[#lines + 1] = string.format("  - %s (%d symbols)", group.label, tonumber(group.symbol_count) or 0)
+        local group_line = #lines
+        local outgoing = ((report.outgoing or {})[group_id]) or {}
+        if #outgoing == 0 then
+          lines[#lines + 1] = "      -> (none)"
+        else
+          for _, target_group_id in ipairs(outgoing) do
+            local target = (report.groups or {})[target_group_id]
+            local edge_meta = ((((report.edge_counts or {})[group_id] or {})[target_group_id]) or {})
+            local edge_count = tonumber(edge_meta.count) or 0
+            lines[#lines + 1] = string.format("      -> %s (%d)", target and target.label or target_group_id, edge_count)
+          end
+        end
+        if group.target then
+          line_actions[group_line] = {
+            target = group.target,
+          }
+        end
+      end
+    end
+  end
+
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "rule_violations:"
+
+  if not report.violations or #report.violations == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, item in ipairs(report.violations) do
+      local src = (report.groups or {})[item.source_group_id]
+      local dst = (report.groups or {})[item.target_group_id]
+      lines[#lines + 1] = string.format(
+        "  - %s -> %s (%d edges)",
+        src and src.label or item.source_group_id,
+        dst and dst.label or item.target_group_id,
+        tonumber(item.count) or 0
+      )
+
+      local examples = item.examples or {}
+      for _, example in ipairs(examples) do
+        local source_symbol = ((report.symbols_by_id or {})[example.source_symbol_id])
+        local target_symbol = ((report.symbols_by_id or {})[example.target_symbol_id])
+        if source_symbol and target_symbol then
+          lines[#lines + 1] = string.format(
+            "      example: %s -> %s",
+            tostring(source_symbol.name),
+            tostring(target_symbol.name)
+          )
+          line_actions[#lines] = {
+            target = {
+              path = source_symbol.path,
+              row = source_symbol.range[1],
+              col = source_symbol.range[2],
+            },
+          }
+        end
+      end
+    end
+  end
+
+  return {
+    lines = lines,
+    line_actions = line_actions,
+  }
+end
+
 return M

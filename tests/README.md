@@ -140,4 +140,10 @@ Run knowledge graph smoke test (Feature 23):
 nvim --headless --clean -u tests/minimal_init.lua +"luafile tests/headless/feature23.lua" +qall
 ```
 
+Run architecture graph smoke test (Feature 24):
+
+```bash
+nvim --headless --clean -u tests/minimal_init.lua +"luafile tests/headless/feature24.lua" +qall
+```
+
 As features grow, add one file per feature in `tests/headless/` and keep each check fast.

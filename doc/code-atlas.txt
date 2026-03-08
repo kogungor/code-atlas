@@ -103,6 +103,16 @@ Example using Lua setup:
     Build a unified knowledge graph summary. If path is provided, write a
     snapshot with schema_version "knowledge_graph.v1".
 
+- :CodeAtlasArchitecture [include_tests=bool]
+                         [unknown_policy=allow|deny]
+                         [max_examples=N]
+                         [path=...]
+                         [format=json]
+                         [pretty=bool]
+    Show architecture layer/domain grouping, dependency edges, and rule
+    violations with example callsites. If path is provided, write a JSON
+    snapshot.
+
 - :CodeAtlasUI tree|ascii
     Switch graph UI mode.
 
@@ -147,6 +157,13 @@ Default configuration:
       max_width = 0.8,
       max_height = 0.8,
     },
+    architecture = {
+      include_tests = false,
+      unknown_layer_policy = "allow",
+      max_violation_examples = 3,
+      export_format = "json",
+      export_pretty = true,
+    },
   }
 <
 
@@ -167,6 +184,11 @@ Fields:
   ui.border     Floating window border style.
   ui.max_width  Max floating width ratio of editor columns.
   ui.max_height Max floating height ratio of editor lines.
+  architecture.include_tests  Include test symbols in architecture groups.
+  architecture.unknown_layer_policy  Allow/deny dependencies for unknown layers.
+  architecture.max_violation_examples  Max violation examples per edge.
+  architecture.export_format  Snapshot format for architecture report.
+  architecture.export_pretty  Pretty-print architecture snapshot output.
 
 ==============================================================================
 6. Limitations                                                *code-atlas-limitations*
@@ -178,6 +200,7 @@ Fields:
 - Polymorphic callsites are shown as dynamic edges with alternative targets (best-effort).
 - LSP call hierarchy availability depends on language server support.
 - Very large repositories may require stronger indexing guardrails.
+- Architecture layer grouping is heuristic and may need project-specific tuning.
 
 ==============================================================================
 vim:tw=78:ts=8:ft=help:norl:
