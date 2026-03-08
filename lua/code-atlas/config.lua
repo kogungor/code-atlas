@@ -2,6 +2,12 @@ local M = {}
 
 M.defaults = {
   depth_limit = 2,
+  layout = {
+    algorithm = "hierarchical",
+    spacing_x = 220,
+    spacing_y = 90,
+    force_iterations = 24,
+  },
   ui = {
     border = "rounded",
     max_width = 0.8,

@@ -225,6 +225,12 @@ local function run_project_graph(direction)
     depth_limit = config.depth_limit,
     direction = direction,
   })
+  subgraph.layout = render.layout_metadata(subgraph, {
+    algorithm = ((config.layout or {}).algorithm) or "hierarchical",
+    spacing_x = (config.layout or {}).spacing_x,
+    spacing_y = (config.layout or {}).spacing_y,
+    iterations = (config.layout or {}).force_iterations,
+  })
   local doc = render.project_graph_document(index, subgraph)
 
   local title = direction == "incoming" and " code-atlas reverse graph " or " code-atlas project graph "
@@ -285,6 +291,12 @@ function M.run_module_dependency_graph(level)
     depth_limit = config.depth_limit,
     direction = "outgoing",
   })
+  subgraph.layout = render.layout_metadata(subgraph, {
+    algorithm = ((config.layout or {}).algorithm) or "hierarchical",
+    spacing_x = (config.layout or {}).spacing_x,
+    spacing_y = (config.layout or {}).spacing_y,
+    iterations = (config.layout or {}).force_iterations,
+  })
   local title = level == "package" and "code-atlas package graph" or "code-atlas module graph"
   local doc = render.dependency_graph_document(dep_graph, subgraph, {
     title = title,
@@ -339,6 +351,12 @@ function M.run_import_graph(direction)
   local subgraph = graph.dependency_subgraph(import_graph, relpath, {
     depth_limit = config.depth_limit,
     direction = direction,
+  })
+  subgraph.layout = render.layout_metadata(subgraph, {
+    algorithm = ((config.layout or {}).algorithm) or "hierarchical",
+    spacing_x = (config.layout or {}).spacing_x,
+    spacing_y = (config.layout or {}).spacing_y,
+    iterations = (config.layout or {}).force_iterations,
   })
 
   local title = direction == "incoming" and "code-atlas reverse import graph" or "code-atlas import graph"
@@ -448,6 +466,7 @@ local function parse_export_args(raw_args)
     path = nil,
     direction = "outgoing",
     depth = nil,
+    layout = nil,
   }
 
   for _, token in ipairs(raw_args or {}) do
@@ -462,11 +481,15 @@ local function parse_export_args(raw_args)
         out.direction = value
       elseif key == "depth" then
         out.depth = tonumber(value)
+      elseif key == "layout" then
+        out.layout = value
       else
         return nil, "unknown option: " .. key
       end
     elseif token == "incoming" or token == "outgoing" then
       out.direction = token
+    elseif token == "hierarchical" or token == "force" then
+      out.layout = token
     elseif not out.format then
       out.format = token
     elseif not out.path then
@@ -497,6 +520,7 @@ function M.run_graph_export(raw_args)
   local export = require("code-atlas.export")
   local index_mod = require("code-atlas.index")
   local graph = require("code-atlas.graph")
+  local render = require("code-atlas.render")
   local config = require("code-atlas.config").get()
 
   local args, args_err = parse_export_args(raw_args)
@@ -537,9 +561,20 @@ function M.run_graph_export(raw_args)
     depth = config.depth_limit
   end
 
+  local layout_algorithm = args.layout
+  if not layout_algorithm then
+    layout_algorithm = ((config.layout or {}).algorithm) or "hierarchical"
+  end
+
   local subgraph = graph.project_subgraph(index, root_symbol.id, {
     depth_limit = depth,
     direction = args.direction,
+  })
+  subgraph.layout = render.layout_metadata(subgraph, {
+    algorithm = layout_algorithm,
+    spacing_x = (config.layout or {}).spacing_x,
+    spacing_y = (config.layout or {}).spacing_y,
+    iterations = (config.layout or {}).force_iterations,
   })
 
   local export_path = args.path
@@ -550,6 +585,7 @@ function M.run_graph_export(raw_args)
   local result, export_err = export.export_subgraph(index, subgraph, {
     format = format,
     path = vim.fs.normalize(export_path),
+    layout_algorithm = layout_algorithm,
   })
 
   if not result then
@@ -672,9 +708,9 @@ function M.create_user_commands()
         or cmdline:find("%f[%w]graphviz%f[%W]")
         or cmdline:find("%f[%w]dot%f[%W]")
       if not has_format then
-        return { "json", "graphviz", "mermaid", "incoming", "outgoing" }
+        return { "json", "graphviz", "mermaid", "incoming", "outgoing", "hierarchical", "force" }
       end
-      return { "path=", "direction=outgoing", "direction=incoming", "depth=" }
+      return { "path=", "direction=outgoing", "direction=incoming", "depth=", "layout=hierarchical", "layout=force" }
     end,
     desc = "Export project graph (json|graphviz|mermaid)",
   })

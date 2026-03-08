@@ -104,4 +104,10 @@ Run graph export smoke test (Feature 18):
 nvim --headless --clean -u tests/minimal_init.lua +"luafile tests/headless/feature18.lua" +qall
 ```
 
+Run graph layout metadata smoke test (Feature 19):
+
+```bash
+nvim --headless --clean -u tests/minimal_init.lua +"luafile tests/headless/feature19.lua" +qall
+```
+
 As features grow, add one file per feature in `tests/headless/` and keep each check fast.
