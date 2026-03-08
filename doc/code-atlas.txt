@@ -65,6 +65,12 @@ Example using Lua setup:
 - :CodeAtlasProjectReverseGraph
     Show reverse project call graph (callers) from symbol under cursor.
 
+- :CodeAtlasLSPGraph
+    Show LSP call hierarchy graph (callees) from function under cursor.
+
+- :CodeAtlasLSPReverseGraph
+    Show reverse LSP call hierarchy graph (callers) from function under cursor.
+
 - :CodeAtlasModuleGraph
     Show module dependency graph rooted at current symbol module.
 
@@ -109,6 +115,12 @@ Default configuration:
 >
   {
     depth_limit = 2,
+    lsp = {
+      enabled = true,
+      timeout_ms = 1200,
+      prefer_call_hierarchy = false,
+      include_external = false,
+    },
     layout = {
       algorithm = "hierarchical",
       spacing_x = 220,
@@ -126,6 +138,10 @@ Default configuration:
 
 Fields:
   depth_limit   Maximum traversal depth in graph views.
+  lsp.enabled   Enable LSP call hierarchy integration.
+  lsp.timeout_ms  Timeout for call hierarchy requests.
+  lsp.prefer_call_hierarchy  Prefer LSP hierarchy for project graph commands.
+  lsp.include_external  Include external library nodes in LSP graph output.
   layout.algorithm  Graph layout metadata algorithm: "hierarchical" or "force".
   layout.spacing_x  Horizontal spacing used by hierarchical layout metadata.
   layout.spacing_y  Vertical spacing used by hierarchical layout metadata.
@@ -140,7 +156,7 @@ Fields:
 
 - Cross-file resolution is currently heuristic name matching.
 - Type-aware call resolution and polymorphism modeling are not complete.
-- LSP call hierarchy integration is not added yet.
+- LSP call hierarchy availability depends on language server support.
 - Very large repositories may require stronger indexing guardrails.
 
 ==============================================================================
