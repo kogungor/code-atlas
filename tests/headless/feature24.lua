@@ -12,6 +12,13 @@ atlas.setup({
     unknown_layer_policy = "deny",
     max_violation_examples = 2,
     export_format = "json",
+    layer_by_path_prefix = {
+      ["playground/samples/"] = "interface",
+    },
+    domain_by_top_dir = {
+      playground = "samplescope",
+    },
+    rules_mode = "merge",
   },
 })
 
@@ -35,6 +42,18 @@ end
 
 if (report.dependency_count or 0) == 0 then
   error("feature24 smoke failed: expected architecture dependencies")
+end
+
+if not report.options or report.options.layer_by_path_prefix["playground/samples/"] ~= "interface" then
+  error("feature24 smoke failed: expected layer_by_path_prefix override in options")
+end
+
+if not report.options or report.options.domain_by_top_dir.playground ~= "samplescope" then
+  error("feature24 smoke failed: expected domain_by_top_dir override in options")
+end
+
+if not report.severity_counts then
+  error("feature24 smoke failed: expected severity_counts in report")
 end
 
 local snapshot_path = vim.fn.tempname() .. ".json"
@@ -61,6 +80,9 @@ end
 if not text:find("unknown_layer_policy: deny", 1, true) then
   error("feature24 smoke failed: expected unknown_layer_policy in output")
 end
+if not text:find("severity: critical=", 1, true) then
+  error("feature24 smoke failed: expected severity summary in output")
+end
 
 local json_text = table.concat(vim.fn.readfile(snapshot_path), "\n")
 if not json_text:find('"violation_count":', 1, true) then
@@ -68,6 +90,9 @@ if not json_text:find('"violation_count":', 1, true) then
 end
 if not json_text:find('"groups":', 1, true) then
   error("feature24 smoke failed: expected groups in snapshot")
+end
+if not json_text:find('"severity_counts":', 1, true) then
+  error("feature24 smoke failed: expected severity_counts in snapshot")
 end
 
 vim.notify("feature24 smoke passed", vim.log.levels.INFO)
