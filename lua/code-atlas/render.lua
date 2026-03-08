@@ -782,4 +782,57 @@ function M.impact_document(report)
   }
 end
 
+function M.knowledge_graph_document(graph)
+  local counts = graph.counts or {}
+  local edge_type_counts = counts.edge_type_counts or {}
+  local edge_types = {}
+  for edge_type, count in pairs(edge_type_counts) do
+    edge_types[#edge_types + 1] = string.format("  - %s: %d", tostring(edge_type), tonumber(count) or 0)
+  end
+  table.sort(edge_types)
+
+  local lines = {
+    "code-atlas knowledge graph",
+    "",
+    string.format("schema: %s", tostring(graph.schema_version)),
+    string.format("root: %s", tostring(graph.root)),
+    string.format("generated_at: %s", tostring(graph.generated_at)),
+    string.format("nodes: %d", tonumber(counts.total_nodes) or 0),
+    string.format("edges: %d", tonumber(counts.total_edges) or 0),
+    "",
+    "node_types:",
+    string.format("  - functions: %d", tonumber(counts.function_nodes) or 0),
+    string.format("  - types: %d", tonumber(counts.type_nodes) or 0),
+    string.format("  - files: %d", tonumber(counts.file_nodes) or 0),
+    string.format("  - modules: %d", tonumber(counts.module_nodes) or 0),
+    string.format("  - packages: %d", tonumber(counts.package_nodes) or 0),
+    string.format("  - tests: %d", tonumber(counts.test_nodes) or 0),
+  }
+
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "edge_types:"
+  if #edge_types == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, line in ipairs(edge_types) do
+      lines[#lines + 1] = line
+    end
+  end
+
+  local validation = graph.validation or {}
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "validation: " .. tostring(validation.ok == true)
+  if validation.errors and #validation.errors > 0 then
+    lines[#lines + 1] = "errors:"
+    for _, err in ipairs(validation.errors) do
+      lines[#lines + 1] = "  - " .. tostring(err)
+    end
+  end
+
+  return {
+    lines = lines,
+    line_actions = {},
+  }
+end
+
 return M

@@ -74,6 +74,14 @@ Suggested cursor position:
 
 - `calculate_dynamic` to see one callsite fan out to multiple targets
 
+To preview the unified knowledge graph summary and write a snapshot:
+
+```vim
+:CodeAtlasKnowledge
+:CodeAtlasKnowledge path=/tmp/code-atlas-knowledge.json
+:CodeAtlasKnowledge path=/tmp/code-atlas-knowledge.jsonl format=jsonl include_tests=false
+```
+
 ## Workflow for each new feature
 
 1. Add or update a sample file in `playground/samples/`.

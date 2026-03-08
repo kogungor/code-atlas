@@ -62,6 +62,7 @@ Local development with `lazy.nvim`:
 - `:CodeAtlasDeadCode` dead function report
 - `:CodeAtlasImpact` impact analysis for function under cursor
 - `:CodeAtlasExport [format] [path] [incoming|outgoing] [depth=N] [layout=hierarchical|force]` export project graph for symbol under cursor
+- `:CodeAtlasKnowledge [path|path=...] [format=json|jsonl] [include_tests=bool] [include_imports=bool] [include_types=bool] [include_external=bool]` build unified knowledge graph summary and optional snapshot
 - `:CodeAtlasUI tree|ascii` switch UI mode
 
 ## Main Configuration
