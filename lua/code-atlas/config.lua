@@ -61,6 +61,14 @@ M.defaults = {
     export_format = "json",
     export_pretty = true,
   },
+  viewer = {
+    depth_limit = 3,
+    direction = "outgoing",
+    dynamic_only = false,
+    node_kind = "all",
+    filter_path_prefix = nil,
+    search_query = nil,
+  },
 }
 
 M.options = vim.deepcopy(M.defaults)

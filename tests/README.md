@@ -152,4 +152,10 @@ Run code evolution graph smoke test (Feature 25):
 nvim --headless --clean -u tests/minimal_init.lua +"luafile tests/headless/feature25.lua" +qall
 ```
 
+Run interactive graph viewer smoke test (Feature 26):
+
+```bash
+nvim --headless --clean -u tests/minimal_init.lua +"luafile tests/headless/feature26.lua" +qall
+```
+
 As features grow, add one file per feature in `tests/headless/` and keep each check fast.
