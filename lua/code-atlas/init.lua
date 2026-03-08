@@ -197,6 +197,13 @@ local function run_project_graph(direction)
   local window = require("code-atlas.window")
   local config = require("code-atlas.config").get()
 
+  if ((config.lsp or {}).prefer_call_hierarchy) == true then
+    local used_lsp = M.run_lsp_call_graph(direction, { silent = true })
+    if used_lsp then
+      return
+    end
+  end
+
   local index = index_mod.get()
   if not index then
     local built = M.build_project_index({ root = vim.fn.getcwd() })
@@ -248,6 +255,125 @@ end
 
 function M.run_project_reverse_call_graph()
   run_project_graph("incoming")
+end
+
+function M.run_lsp_call_graph(direction, opts)
+  opts = opts or {}
+  direction = direction or "outgoing"
+
+  local lsp = require("code-atlas.lsp")
+  local render = require("code-atlas.render")
+  local window = require("code-atlas.window")
+  local config = require("code-atlas.config").get()
+  local lsp_cfg = config.lsp or {}
+
+  if lsp_cfg.enabled == false then
+    if not opts.silent then
+      vim.notify("code-atlas: lsp call hierarchy is disabled in config", vim.log.levels.WARN)
+    end
+    return false
+  end
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  local source_win = vim.api.nvim_get_current_win()
+  if not lsp.is_available(bufnr) then
+    if not opts.silent then
+      vim.notify("code-atlas: no lsp client attached", vim.log.levels.WARN)
+    end
+    return false
+  end
+
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local positions = {
+    { row = cursor[1] - 1, col = cursor[2] },
+    { row = cursor[1] - 1, col = 0 },
+  }
+
+  local function add_position(row, col)
+    if row == nil or col == nil then
+      return
+    end
+    for _, pos in ipairs(positions) do
+      if pos.row == row and pos.col == col then
+        return
+      end
+    end
+    positions[#positions + 1] = { row = row, col = col }
+  end
+
+  local index_mod = require("code-atlas.index")
+  local index = index_mod.get()
+  if not index then
+    index = M.build_project_index({ root = vim.fn.getcwd() })
+  end
+  if index then
+    local path = vim.fs.normalize(vim.api.nvim_buf_get_name(bufnr))
+    local symbol = index_mod.find_symbol_at(index, path, cursor[1] - 1, cursor[2])
+    if symbol and symbol.range then
+      add_position(symbol.range[1], symbol.range[2])
+      add_position(symbol.range[1], 0)
+
+      if symbol.name and symbol.name ~= "" then
+        local line_text = vim.api.nvim_buf_get_lines(bufnr, symbol.range[1], symbol.range[1] + 1, false)[1] or ""
+        local name_start = line_text:find(symbol.name, 1, true)
+        if name_start then
+          add_position(symbol.range[1], name_start - 1)
+        end
+      end
+    end
+  end
+
+  local subgraph, err = lsp.call_hierarchy_subgraph(bufnr, {
+    direction = direction,
+    depth_limit = config.depth_limit,
+    timeout_ms = lsp_cfg.timeout_ms,
+    include_external = lsp_cfg.include_external,
+    root = vim.fn.getcwd(),
+    positions = positions,
+  })
+  if not subgraph then
+    if not opts.silent then
+      local msg = tostring(err)
+      if msg:find("not supported", 1, true) then
+        vim.notify(
+          "code-atlas: current LSP does not support call hierarchy. Use :CodeAtlasProjectGraph / :CodeAtlasProjectReverseGraph for index-based graph.",
+          vim.log.levels.WARN
+        )
+      elseif msg:find("no call hierarchy item", 1, true) then
+        vim.notify(
+          "code-atlas: LSP call hierarchy returned no symbol at cursor. Try placing cursor on function name/declaration and retry.",
+          vim.log.levels.WARN
+        )
+      else
+        vim.notify("code-atlas: lsp call hierarchy failed: " .. msg, vim.log.levels.WARN)
+      end
+    end
+    return false
+  end
+
+  subgraph.layout = render.layout_metadata(subgraph, {
+    algorithm = ((config.layout or {}).algorithm) or "hierarchical",
+    spacing_x = (config.layout or {}).spacing_x,
+    spacing_y = (config.layout or {}).spacing_y,
+    iterations = (config.layout or {}).force_iterations,
+  })
+
+  local lsp_index = {
+    by_id = subgraph.nodes,
+    unresolved_count = 0,
+  }
+
+  local doc = render.project_graph_document(lsp_index, subgraph)
+  local title = direction == "incoming" and " code-atlas lsp reverse graph " or " code-atlas lsp graph "
+
+  window.open(doc.lines, {
+    title = title,
+    source_win = source_win,
+    source_buf = bufnr,
+    line_actions = doc.line_actions,
+  })
+
+  return true
 end
 
 function M.run_module_dependency_graph(level)
@@ -660,6 +786,18 @@ function M.create_user_commands()
     M.run_project_reverse_call_graph()
   end, {
     desc = "Open reverse project-wide call graph from indexed symbols",
+  })
+
+  vim.api.nvim_create_user_command("CodeAtlasLSPGraph", function()
+    M.run_lsp_call_graph("outgoing")
+  end, {
+    desc = "Open LSP call hierarchy graph (callees)",
+  })
+
+  vim.api.nvim_create_user_command("CodeAtlasLSPReverseGraph", function()
+    M.run_lsp_call_graph("incoming")
+  end, {
+    desc = "Open LSP reverse call hierarchy graph (callers)",
   })
 
   vim.api.nvim_create_user_command("CodeAtlasModuleGraph", function()

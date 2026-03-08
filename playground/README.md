@@ -32,6 +32,20 @@ Suggested cursor positions for testing:
 - `calculate_total` for pricing chain
 - `charge_payment` for payment chain
 
+## TypeScript sample for LSP graph tests
+
+To test call hierarchy with `ts_ls`, open:
+
+```bash
+nvim --clean -u playground/minimal_init.lua playground/samples/ts_checkout_flow.ts
+```
+
+Suggested cursor positions:
+
+- `checkout` for full orchestration
+- `calculateTotal` for pricing chain
+- `applyDiscountRules` for coupon/VIP path
+
 ## Workflow for each new feature
 
 1. Add or update a sample file in `playground/samples/`.

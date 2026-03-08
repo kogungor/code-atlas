@@ -52,6 +52,8 @@ Local development with `lazy.nvim`:
 - `:CodeAtlasIndexRefresh` refresh project index
 - `:CodeAtlasProjectGraph` project call graph (callees)
 - `:CodeAtlasProjectReverseGraph` reverse project call graph (callers)
+- `:CodeAtlasLSPGraph` LSP call hierarchy graph (callees)
+- `:CodeAtlasLSPReverseGraph` LSP call hierarchy reverse graph (callers)
 - `:CodeAtlasModuleGraph` module dependency graph
 - `:CodeAtlasPackageGraph` package dependency graph
 - `:CodeAtlasImportGraph` file import graph
@@ -66,6 +68,12 @@ Local development with `lazy.nvim`:
 ```lua
 require("code-atlas").setup({
   depth_limit = 2,
+  lsp = {
+    enabled = true,
+    timeout_ms = 1200,
+    prefer_call_hierarchy = false,
+    include_external = false,
+  },
   layout = {
     algorithm = "hierarchical", -- "hierarchical" | "force"
   },
@@ -82,7 +90,7 @@ require("code-atlas").setup({
 
 - Cross-file resolution is heuristic name matching (not full type-aware resolution yet)
 - Dynamic dispatch/polymorphism is not fully modeled
-- LSP call hierarchy integration is not added yet
+- LSP call hierarchy support depends on attached server capabilities
 - Language coverage is best-effort and parser/query dependent
 - Large projects may need further performance guardrails/caching improvements
 

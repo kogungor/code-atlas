@@ -2,6 +2,12 @@ local M = {}
 
 M.defaults = {
   depth_limit = 2,
+  lsp = {
+    enabled = true,
+    timeout_ms = 1200,
+    prefer_call_hierarchy = false,
+    include_external = false,
+  },
   layout = {
     algorithm = "hierarchical",
     spacing_x = 220,

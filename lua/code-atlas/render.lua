@@ -456,12 +456,21 @@ function M.project_graph_document(index, subgraph)
   local direction = subgraph.direction or "outgoing"
   local relation_label = direction == "incoming" and "callers" or "callees"
   local layout_algo = ((subgraph.layout or {}).algorithm) or "none"
+  local backend = subgraph.backend or "index"
+  local lsp_client_id = subgraph.lsp_client_id
+  local external_filtered = nil
+  if subgraph.include_external ~= nil then
+    external_filtered = not subgraph.include_external
+  end
 
   local lines = {
     "code-atlas project graph",
     "",
     string.format("root: %s", root_label),
     string.format("mode: %s", relation_label),
+    string.format("backend: %s", backend),
+    lsp_client_id and string.format("lsp_client_id: %s", tostring(lsp_client_id)) or nil,
+    external_filtered ~= nil and string.format("external_filtered: %s", tostring(external_filtered)) or nil,
     string.format("layout: %s", layout_algo),
     string.format("depth_limit: %d", subgraph.depth_limit),
     string.format("nodes: %d, edges: %d", node_count, edge_count),
@@ -469,10 +478,20 @@ function M.project_graph_document(index, subgraph)
     "",
     string.format("%s:", relation_label),
   }
+  lines = vim.tbl_filter(function(value)
+    return value ~= nil
+  end, lines)
   local line_actions = {}
 
   if root_symbol then
-    line_actions[3] = {
+    local root_line = nil
+    for i, line in ipairs(lines) do
+      if line == string.format("root: %s", root_label) then
+        root_line = i
+        break
+      end
+    end
+    line_actions[root_line or 3] = {
       target = {
         path = root_symbol.path,
         row = root_symbol.range[1],
