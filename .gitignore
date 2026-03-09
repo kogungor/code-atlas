@@ -19,7 +19,6 @@ dist/
 build/
 *.dot
 *.svg
-*.png
 *.jsonl
 
 # Dependency directories (if used for local tooling)
