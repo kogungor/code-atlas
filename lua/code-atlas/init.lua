@@ -859,6 +859,277 @@ function M.run_hot_path_detection(opts)
   return report, nil
 end
 
+local function parse_complexity_args(raw_args)
+  local function parse_complex_bool(value)
+    local text = tostring(value):lower()
+    if text == "1" or text == "true" or text == "yes" or text == "on" then
+      return true
+    end
+    if text == "0" or text == "false" or text == "no" or text == "off" then
+      return false
+    end
+    return nil
+  end
+
+  local out = {
+    top_n = nil,
+    scc_limit = nil,
+    include_tests = nil,
+    snapshot_path = nil,
+    snapshot_format = nil,
+    snapshot_pretty = nil,
+  }
+
+  for _, token in ipairs(raw_args or {}) do
+    local key, value = token:match("^([%w_]+)=(.+)$")
+    if key then
+      key = key:lower()
+      if key == "top" or key == "top_n" then
+        local n = tonumber(value)
+        if not n or n < 1 then
+          return nil, "top_n must be a positive number"
+        end
+        out.top_n = math.floor(n)
+      elseif key == "scc_limit" then
+        local n = tonumber(value)
+        if not n or n < 1 then
+          return nil, "scc_limit must be a positive number"
+        end
+        out.scc_limit = math.floor(n)
+      elseif key == "include_tests" then
+        local parsed = parse_complex_bool(value)
+        if parsed == nil then
+          return nil, "include_tests must be true/false"
+        end
+        out.include_tests = parsed
+      elseif key == "path" then
+        out.snapshot_path = value
+      elseif key == "format" then
+        local format = tostring(value):lower()
+        if format ~= "json" and format ~= "jsonl" then
+          return nil, "format must be json or jsonl"
+        end
+        out.snapshot_format = format
+      elseif key == "pretty" then
+        local parsed = parse_complex_bool(value)
+        if parsed == nil then
+          return nil, "pretty must be true/false"
+        end
+        out.snapshot_pretty = parsed
+      else
+        return nil, "unknown option: " .. tostring(key)
+      end
+    elseif not out.snapshot_path then
+      out.snapshot_path = token
+    else
+      return nil, "unexpected argument: " .. tostring(token)
+    end
+  end
+
+  return out, nil
+end
+
+function M.run_complexity_analysis(opts)
+  opts = opts or {}
+  local index_mod = require("code-atlas.index")
+  local analysis = require("code-atlas.analysis")
+  local render = require("code-atlas.render")
+  local window = require("code-atlas.window")
+  local config = require("code-atlas.config").get()
+
+  opts = vim.tbl_deep_extend("force", vim.deepcopy(config.complexity or {}), opts)
+
+  local index = index_mod.get()
+  if not index then
+    index = M.build_project_index({ root = vim.fn.getcwd() })
+  end
+  if not index then
+    vim.notify("code-atlas: project index is unavailable", vim.log.levels.ERROR)
+    return nil, "project index unavailable"
+  end
+
+  local report, err = analysis.complexity_report(index, opts)
+  if not report then
+    vim.notify("code-atlas: complexity analysis failed: " .. tostring(err), vim.log.levels.ERROR)
+    return nil, err
+  end
+
+  local snapshot_path = opts.snapshot_path
+  if snapshot_path and snapshot_path ~= "" then
+    local write_result, write_err = analysis.write_complexity_report(vim.fs.normalize(snapshot_path), report, {
+      format = opts.snapshot_format or opts.export_format,
+      pretty = opts.snapshot_pretty ~= nil and opts.snapshot_pretty or opts.export_pretty,
+    })
+    if not write_result then
+      vim.notify("code-atlas: complexity snapshot failed: " .. tostring(write_err), vim.log.levels.ERROR)
+      return nil, write_err
+    end
+    vim.notify(
+      string.format("code-atlas: complexity snapshot written to %s (%s)", write_result.path, write_result.format),
+      vim.log.levels.INFO
+    )
+  end
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  local source_win = vim.api.nvim_get_current_win()
+  local doc = render.complexity_document(report)
+
+  window.open(doc.lines, {
+    title = " code-atlas complexity analysis ",
+    source_win = source_win,
+    source_buf = bufnr,
+    line_actions = doc.line_actions,
+    line_highlights = doc.line_highlights,
+  })
+
+  return report, nil
+end
+
+local function parse_risk_map_args(raw_args)
+  local function parse_risk_bool(value)
+    local text = tostring(value):lower()
+    if text == "1" or text == "true" or text == "yes" or text == "on" then
+      return true
+    end
+    if text == "0" or text == "false" or text == "no" or text == "off" then
+      return false
+    end
+    return nil
+  end
+
+  local out = {
+    top_n = nil,
+    include_tests = nil,
+    include_churn = nil,
+    churn_limit = nil,
+    churn_since = nil,
+    churn_weight = nil,
+    baseline_path = nil,
+    snapshot_path = nil,
+    snapshot_format = nil,
+    snapshot_pretty = nil,
+  }
+
+  for _, token in ipairs(raw_args or {}) do
+    local key, value = token:match("^([%w_]+)=(.+)$")
+    if key then
+      key = key:lower()
+      if key == "top" or key == "top_n" then
+        local n = tonumber(value)
+        if not n or n < 1 then
+          return nil, "top_n must be a positive number"
+        end
+        out.top_n = math.floor(n)
+      elseif key == "include_tests" then
+        local parsed = parse_risk_bool(value)
+        if parsed == nil then
+          return nil, "include_tests must be true/false"
+        end
+        out.include_tests = parsed
+      elseif key == "include_churn" then
+        local parsed = parse_risk_bool(value)
+        if parsed == nil then
+          return nil, "include_churn must be true/false"
+        end
+        out.include_churn = parsed
+      elseif key == "churn_limit" then
+        local n = tonumber(value)
+        if not n or n < 1 then
+          return nil, "churn_limit must be a positive number"
+        end
+        out.churn_limit = math.floor(n)
+      elseif key == "churn_since" then
+        out.churn_since = value
+      elseif key == "churn_weight" then
+        local n = tonumber(value)
+        if not n or n < 0 then
+          return nil, "churn_weight must be a non-negative number"
+        end
+        out.churn_weight = n
+      elseif key == "baseline" or key == "baseline_path" then
+        out.baseline_path = value
+      elseif key == "path" then
+        out.snapshot_path = value
+      elseif key == "format" then
+        local format = tostring(value):lower()
+        if format ~= "json" and format ~= "jsonl" then
+          return nil, "format must be json or jsonl"
+        end
+        out.snapshot_format = format
+      elseif key == "pretty" then
+        local parsed = parse_risk_bool(value)
+        if parsed == nil then
+          return nil, "pretty must be true/false"
+        end
+        out.snapshot_pretty = parsed
+      else
+        return nil, "unknown option: " .. tostring(key)
+      end
+    elseif not out.snapshot_path then
+      out.snapshot_path = token
+    else
+      return nil, "unexpected argument: " .. tostring(token)
+    end
+  end
+
+  return out, nil
+end
+
+function M.run_risk_map(opts)
+  opts = opts or {}
+  local index_mod = require("code-atlas.index")
+  local analysis = require("code-atlas.analysis")
+  local render = require("code-atlas.render")
+  local window = require("code-atlas.window")
+  local config = require("code-atlas.config").get()
+
+  opts = vim.tbl_deep_extend("force", vim.deepcopy(config.risk_map or {}), opts)
+  if opts.churn_weight ~= nil then
+    opts.weight_churn = opts.churn_weight
+  end
+
+  local index = index_mod.get()
+  if not index then
+    index = M.build_project_index({ root = vim.fn.getcwd() })
+  end
+  if not index then
+    vim.notify("code-atlas: project index is unavailable", vim.log.levels.ERROR)
+    return nil, "project index unavailable"
+  end
+
+  local report, err = analysis.risk_map_report(index, opts)
+  if not report then
+    vim.notify("code-atlas: risk map failed: " .. tostring(err), vim.log.levels.ERROR)
+    return nil, err
+  end
+
+  local snapshot_path = opts.snapshot_path
+  if snapshot_path and snapshot_path ~= "" then
+    local write_result, write_err = analysis.write_risk_map_report(vim.fs.normalize(snapshot_path), report, {
+      format = opts.snapshot_format or opts.export_format,
+      pretty = opts.snapshot_pretty ~= nil and opts.snapshot_pretty or opts.export_pretty,
+    })
+    if not write_result then
+      vim.notify("code-atlas: risk snapshot failed: " .. tostring(write_err), vim.log.levels.ERROR)
+      return nil, write_err
+    end
+    vim.notify(string.format("code-atlas: risk snapshot written to %s (%s)", write_result.path, write_result.format), vim.log.levels.INFO)
+  end
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  local source_win = vim.api.nvim_get_current_win()
+  local doc = render.risk_map_document(report)
+  window.open(doc.lines, {
+    title = " code-atlas risk map ",
+    source_win = source_win,
+    source_buf = bufnr,
+    line_actions = doc.line_actions,
+    line_highlights = doc.line_highlights,
+  })
+
+  return report, nil
+end
+
 local function parse_export_args(raw_args)
   local out = {
     format = nil,
@@ -1728,6 +1999,61 @@ function M.create_user_commands()
       }
     end,
     desc = "Rank critical functions and call paths using graph centrality heuristics",
+  })
+
+  vim.api.nvim_create_user_command("CodeAtlasComplexity", function(args)
+    local parsed, parse_err = parse_complexity_args(args.fargs)
+    if not parsed then
+      vim.notify("code-atlas: complexity args invalid: " .. tostring(parse_err), vim.log.levels.ERROR)
+      return
+    end
+    M.run_complexity_analysis(parsed)
+  end, {
+    nargs = "*",
+    complete = function()
+      return {
+        "top=15",
+        "scc_limit=10",
+        "include_tests=false",
+        "include_tests=true",
+        "path=",
+        "format=json",
+        "format=jsonl",
+        "pretty=true",
+        "pretty=false",
+      }
+    end,
+    desc = "Analyze structural complexity via SCC/cycle and cluster metrics",
+  })
+
+  vim.api.nvim_create_user_command("CodeAtlasRiskMap", function(args)
+    local parsed, parse_err = parse_risk_map_args(args.fargs)
+    if not parsed then
+      vim.notify("code-atlas: risk map args invalid: " .. tostring(parse_err), vim.log.levels.ERROR)
+      return
+    end
+    M.run_risk_map(parsed)
+  end, {
+    nargs = "*",
+    complete = function()
+      return {
+        "top=20",
+        "include_tests=false",
+        "include_tests=true",
+        "include_churn=true",
+        "include_churn=false",
+        "churn_limit=60",
+        "churn_since=30 days ago",
+        "churn_weight=0.35",
+        "baseline_path=",
+        "path=",
+        "format=json",
+        "format=jsonl",
+        "pretty=true",
+        "pretty=false",
+      }
+    end,
+    desc = "Build combined risk map using hot path, complexity, architecture, and churn signals",
   })
 
   vim.api.nvim_create_user_command("CodeAtlasExport", function(args)
