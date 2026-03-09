@@ -1,12 +1,39 @@
+<div align="center">
+
 # code-atlas
 
-`code-atlas` is a Neovim code-intelligence plugin for exploring function relationships.
-It combines Tree-sitter parsing with project indexing to answer questions like:
+Neovim code-intelligence for call graphs, architecture checks, and risk-focused code health.
+
+![Neovim](https://img.shields.io/badge/neovim-%3E%3D0.10-57A143?logo=neovim&logoColor=white)
+![Languages](https://img.shields.io/badge/languages-lua%20python%20ts/js%20go%20rust-3b82f6)
+![License](https://img.shields.io/badge/license-MIT-22c55e)
+
+</div>
+
+`code-atlas` combines Tree-sitter parsing, project indexing, and git-aware analysis to answer questions like:
 
 - What does this function call?
 - Who calls this function?
 - Which modules/files depend on this part of the code?
 - What might break if I change or remove this function?
+
+## Screenshot
+
+![code-atlas risk map report](doc/assets/risk-map.png)
+
+## Quick Start (60s)
+
+```bash
+nvim --clean -u playground/minimal_init.lua playground/samples/checkout_flow.lua
+```
+
+Then run in Neovim:
+
+```vim
+:CodeAtlasIndex
+:CodeAtlasProjectGraph
+:CodeAtlasRiskMap top=10
+```
 
 ## Main Features
 
@@ -18,6 +45,12 @@ It combines Tree-sitter parsing with project indexing to answer questions like:
 - Dead code report (zero incoming callers)
 - Impact analysis report (direct + transitive callers)
 - Architecture dependency report with layer violation checks
+- Code evolution report (timeline + churn hotspots)
+- Interactive graph viewer (focus/filter/search + zoom/pan-like controls)
+- Hot path detection (critical symbols and call chains)
+- Complexity analysis (SCC/cycles, density, structural score)
+- Risk map report (combined architecture/hot-path/complexity/churn signals)
+- Snapshot exports for advanced reports (`json` / `jsonl`)
 - Optional Telescope picker integration (`:CodeAtlasPick`)
 
 ## Requirements
@@ -184,28 +217,19 @@ require("code-atlas").setup({
 
 ## Limitations (Current)
 
-- Cross-file resolution is heuristic name matching (not full type-aware resolution yet)
-- Dynamic dispatch/polymorphism is not fully modeled
-- LSP call hierarchy support depends on attached server capabilities
-- LSP graph defaults to project-local symbols; set `lsp.include_external=true` to include library nodes
-- Type-aware call resolution is partial (receiver-aware for TS/JS method calls)
-- Receiver-aware heuristics now also include Python/Go/Rust patterns (best-effort)
-- Project graph now shows mixed-source resolution preview (`index`, `lsp`, `mixed(index+lsp)`) with confidence labels when available
-- Project graph now annotates polymorphic/dynamic call edges and alternative targets
-- Architecture report now includes severity scoring (`critical/high/medium/low`) for rule violations
-- Layer/domain inference is heuristic by default, but can be overridden via `architecture.*_prefix` and `architecture.*_top_dir`
-- Evolution report uses git churn heuristics and current index mapping for symbol/edge touch estimation
-- Interactive viewer adds focus/filter/search, node-kind filtering, search highlighting, and zoom/pan-style navigation over project graph data
-- Hot path detection combines centrality/reach with optional git churn weighting to rank risk-heavy critical chains
-- Complexity analysis uses SCC/cycle and density heuristics; tune weights for repository-specific interpretation
-- Complexity report now includes severity bands and actionable suggestions based on cycle size, density, and bridge hotspots
-- Risk map report now includes severity bands, actionable suggestions, and optional trend deltas against a baseline snapshot
-- Language coverage is best-effort and parser/query dependent
-- Large projects may need further performance guardrails/caching improvements
+- Cross-file and type-aware resolution are heuristic (not full semantic analysis)
+- Dynamic dispatch/polymorphism support is best-effort and confidence-based
+- LSP features depend on attached server capabilities and project setup
+- Architecture, hot-path, complexity, and risk scores are heuristic and require per-repo tuning
+- Language/query coverage is best-effort and may vary by parser availability
+- Very large repositories may require stricter caps/caching for optimal performance
+- For detailed limitations and caveats, see `doc/code-atlas.txt`
 
 ## Help Docs
 
 - Vim help file: `doc/code-atlas.txt`
+- Contributing guide: `CONTRIBUTING.md`
+- Release process: `RELEASE.md`
 - After install, generate helptags for this plugin doc directory:
 
 ```vim

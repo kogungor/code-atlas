@@ -182,6 +182,17 @@ Example using Lua setup:
 - r           Refresh current view
 - q, <Esc>    Close window
 
+Additional interactive viewer keys (`:CodeAtlasViewer`):
+- f / F       Focus selected symbol / reset focus
+- /           Prompt search query
+- n / N       Next / previous search match
+- s           Prompt path-prefix filter
+- k           Prompt node-kind filter (all/function/method)
+- d           Toggle dynamic-only mode
+- + / -       Increase / decrease depth
+- H / L       Pan to incoming / outgoing neighbor focus
+- B / W       Navigate focus history backward / forward
+
 ==============================================================================
 5. Configuration                                              *code-atlas-config*
 
