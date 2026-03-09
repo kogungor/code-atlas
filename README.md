@@ -19,7 +19,7 @@ Neovim code-intelligence for call graphs, architecture checks, and risk-focused 
 
 ## Screenshot
 
-![code-atlas risk map report](doc/assets/risk-map.png)
+![code-atlas risk map report](risk-map.png)
 
 ## Quick Start (60s)
 
