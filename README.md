@@ -68,6 +68,8 @@ Local development with `lazy.nvim`:
 - `:CodeAtlasEvolution [limit=N] [hotspot_limit=N] [include_merges=bool] [since=...] [path=...] [out=...] [format=json|jsonl] [pretty=bool] [timeout_ms=N]` build git-based code evolution timeline and churn hotspots with optional snapshot export
 - `:CodeAtlasViewer [incoming|outgoing] [depth=N] [dynamic_only=bool] [kind=all|function|method] [filter=path_prefix] [search=query]` open advanced interactive project graph viewer
 - `:CodeAtlasHotPath [incoming|outgoing] [top=N] [max_depth=N] [path_depth=N] [path_count=N] [include_tests=bool] [include_churn=bool] [churn_limit=N] [churn_since=...] [churn_weight=N]` rank central functions and critical call chains with optional git-churn weighting
+- `:CodeAtlasComplexity [top=N] [scc_limit=N] [include_tests=bool] [path=...] [format=json|jsonl] [pretty=bool]` compute SCC/cycle complexity, cluster metrics, and optional snapshot export
+- `:CodeAtlasRiskMap [top=N] [include_tests=bool] [include_churn=bool] [churn_limit=N] [churn_since=...] [churn_weight=N] [baseline_path=...] [path=...] [format=json|jsonl] [pretty=bool]` build combined risk map from architecture/hot-path/complexity/churn signals with severity and optional trend comparison
 - `:CodeAtlasUI tree|ascii` switch UI mode
 
 ## Main Configuration
@@ -146,6 +148,37 @@ require("code-atlas").setup({
     weight_reach = 1.1,
     weight_churn = 0.15,
   },
+  complexity = {
+    top_n = 15,
+    scc_limit = 10,
+    include_tests = false,
+    cycle_weight = 12,
+    degree_weight = 1.0,
+    bridge_weight = 1.5,
+    scc_size_weight = 0.7,
+    severity_thresholds = { critical = 70, high = 45, medium = 25 },
+    suggestion_scc_size = 6,
+    suggestion_density = 0.35,
+    suggestion_top_bridge = 6,
+    export_format = "json",
+    export_pretty = true,
+  },
+  risk_map = {
+    top_n = 20,
+    include_tests = false,
+    include_churn = true,
+    churn_limit = 60,
+    churn_since = nil,
+    churn_timeout_ms = 5000,
+    weight_hot_path = 1.3,
+    weight_complexity = 1.1,
+    weight_architecture = 1.6,
+    weight_churn = 0.35,
+    severity_thresholds = { critical = 2.2, high = 1.4, medium = 0.8 },
+    baseline_path = nil,
+    export_format = "json",
+    export_pretty = true,
+  },
 })
 ```
 
@@ -164,6 +197,9 @@ require("code-atlas").setup({
 - Evolution report uses git churn heuristics and current index mapping for symbol/edge touch estimation
 - Interactive viewer adds focus/filter/search, node-kind filtering, search highlighting, and zoom/pan-style navigation over project graph data
 - Hot path detection combines centrality/reach with optional git churn weighting to rank risk-heavy critical chains
+- Complexity analysis uses SCC/cycle and density heuristics; tune weights for repository-specific interpretation
+- Complexity report now includes severity bands and actionable suggestions based on cycle size, density, and bridge hotspots
+- Risk map report now includes severity bands, actionable suggestions, and optional trend deltas against a baseline snapshot
 - Language coverage is best-effort and parser/query dependent
 - Large projects may need further performance guardrails/caching improvements
 

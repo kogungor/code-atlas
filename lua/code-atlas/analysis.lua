@@ -1176,6 +1176,834 @@ function M.hot_path_report(index, opts)
   }, nil
 end
 
+local function tarjan_scc(nodes, edges)
+  local index_id = 0
+  local stack = {}
+  local on_stack = {}
+  local indices = {}
+  local low = {}
+  local components = {}
+
+  local function strongconnect(v)
+    index_id = index_id + 1
+    indices[v] = index_id
+    low[v] = index_id
+    stack[#stack + 1] = v
+    on_stack[v] = true
+
+    for _, w in ipairs((edges or {})[v] or {}) do
+      if nodes[w] then
+        if not indices[w] then
+          strongconnect(w)
+          low[v] = math.min(low[v], low[w])
+        elseif on_stack[w] then
+          low[v] = math.min(low[v], indices[w])
+        end
+      end
+    end
+
+    if low[v] == indices[v] then
+      local component = {}
+      while #stack > 0 do
+        local w = table.remove(stack)
+        on_stack[w] = false
+        component[#component + 1] = w
+        if w == v then
+          break
+        end
+      end
+      components[#components + 1] = component
+    end
+  end
+
+  for id, _ in pairs(nodes or {}) do
+    if not indices[id] then
+      strongconnect(id)
+    end
+  end
+
+  return components
+end
+
+local function complexity_cluster_metrics(index, symbol_ids)
+  local module_stats = {}
+  local total_edges = 0
+
+  for _, symbol_id in ipairs(symbol_ids) do
+    local symbol = (index.by_id or {})[symbol_id]
+    if symbol then
+      local module_id = symbol.module_id or "(unknown)"
+      module_stats[module_id] = module_stats[module_id] or {
+        module_id = module_id,
+        symbols = 0,
+        edges = 0,
+      }
+      module_stats[module_id].symbols = module_stats[module_id].symbols + 1
+    end
+  end
+
+  local set = {}
+  for _, id in ipairs(symbol_ids) do
+    set[id] = true
+  end
+
+  for _, symbol_id in ipairs(symbol_ids) do
+    local symbol = (index.by_id or {})[symbol_id]
+    if symbol then
+      local module_id = symbol.module_id or "(unknown)"
+      for _, target_id in ipairs((index.outgoing or {})[symbol_id] or {}) do
+        if set[target_id] then
+          module_stats[module_id].edges = module_stats[module_id].edges + 1
+          total_edges = total_edges + 1
+        end
+      end
+    end
+  end
+
+  local modules = {}
+  for _, item in pairs(module_stats) do
+    local n = item.symbols
+    local max_edges = math.max(1, n * (n - 1))
+    item.density = item.edges / max_edges
+    modules[#modules + 1] = item
+  end
+
+  table.sort(modules, function(a, b)
+    if a.density == b.density then
+      return a.symbols > b.symbols
+    end
+    return a.density > b.density
+  end)
+
+  local max_cluster_density = 0
+  for _, item in ipairs(modules) do
+    max_cluster_density = math.max(max_cluster_density, item.density)
+  end
+
+  return {
+    module_clusters = modules,
+    module_count = #modules,
+    max_cluster_density = max_cluster_density,
+    total_internal_edges = total_edges,
+  }
+end
+
+local function classify_severity(score, thresholds)
+  if score >= (tonumber(thresholds.critical) or 70) then
+    return "critical"
+  end
+  if score >= (tonumber(thresholds.high) or 45) then
+    return "high"
+  end
+  if score >= (tonumber(thresholds.medium) or 25) then
+    return "medium"
+  end
+  return "low"
+end
+
+function M.complexity_report(index, opts)
+  if not index then
+    return nil, "project index unavailable"
+  end
+
+  opts = vim.tbl_deep_extend("force", {
+    include_tests = false,
+    top_n = 15,
+    scc_limit = 10,
+    cycle_weight = 12,
+    degree_weight = 1.0,
+    bridge_weight = 1.5,
+    scc_size_weight = 0.7,
+    severity_thresholds = {
+      critical = 70,
+      high = 45,
+      medium = 25,
+    },
+    suggestion_scc_size = 6,
+    suggestion_density = 0.35,
+    suggestion_top_bridge = 6,
+  }, opts or {})
+
+  local nodes = {}
+  local symbol_ids = {}
+  for _, symbol in ipairs(index.symbols or {}) do
+    if opts.include_tests or not is_test_symbol(symbol) then
+      nodes[symbol.id] = symbol
+      symbol_ids[#symbol_ids + 1] = symbol.id
+    end
+  end
+
+  local components = tarjan_scc(nodes, index.outgoing or {})
+  local scc_by_symbol = {}
+  local sccs = {}
+  local cyclic_count = 0
+
+  for i, component in ipairs(components) do
+    local has_cycle = #component > 1
+    if not has_cycle and #component == 1 then
+      local only = component[1]
+      for _, target in ipairs((index.outgoing or {})[only] or {}) do
+        if target == only then
+          has_cycle = true
+          break
+        end
+      end
+    end
+
+    local edge_count = 0
+    local set = {}
+    for _, id in ipairs(component) do
+      set[id] = true
+      scc_by_symbol[id] = i
+    end
+    for _, id in ipairs(component) do
+      for _, target in ipairs((index.outgoing or {})[id] or {}) do
+        if set[target] then
+          edge_count = edge_count + 1
+        end
+      end
+    end
+
+    local n = #component
+    local max_edges = math.max(1, n * (n - 1))
+    local density = edge_count / max_edges
+    if has_cycle then
+      cyclic_count = cyclic_count + n
+    end
+
+    sccs[#sccs + 1] = {
+      id = i,
+      size = n,
+      has_cycle = has_cycle,
+      edge_count = edge_count,
+      density = density,
+      symbols = component,
+    }
+  end
+
+  table.sort(sccs, function(a, b)
+    if a.size == b.size then
+      if a.density == b.density then
+        return a.id < b.id
+      end
+      return a.density > b.density
+    end
+    return a.size > b.size
+  end)
+
+  local complexity_by_symbol = {}
+  for _, symbol_id in ipairs(symbol_ids) do
+    local symbol = nodes[symbol_id]
+    local in_d = #((index.incoming or {})[symbol_id] or {})
+    local out_d = #((index.outgoing or {})[symbol_id] or {})
+    local bridge = math.min(in_d, out_d)
+    local scc = sccs[scc_by_symbol[symbol_id] or 0]
+    local cycle_bonus = (scc and scc.has_cycle) and opts.cycle_weight or 0
+    local scc_size = scc and scc.size or 1
+    local score = cycle_bonus
+      + ((in_d + out_d) * opts.degree_weight)
+      + (bridge * opts.bridge_weight)
+      + ((scc_size - 1) * opts.scc_size_weight)
+
+    complexity_by_symbol[symbol_id] = {
+      symbol = symbol,
+      score = score,
+      in_degree = in_d,
+      out_degree = out_d,
+      bridge = bridge,
+      scc_id = scc and scc.id or nil,
+      scc_size = scc_size,
+      in_cycle = (scc and scc.has_cycle) == true,
+    }
+  end
+
+  local ranked = {}
+  for _, item in pairs(complexity_by_symbol) do
+    ranked[#ranked + 1] = item
+  end
+  table.sort(ranked, function(a, b)
+    if a.score == b.score then
+      return symbol_label(a.symbol) < symbol_label(b.symbol)
+    end
+    return a.score > b.score
+  end)
+
+  local top = {}
+  local severity_counts = {
+    critical = 0,
+    high = 0,
+    medium = 0,
+    low = 0,
+  }
+  local top_n = math.max(1, tonumber(opts.top_n) or 15)
+  for i = 1, math.min(top_n, #ranked) do
+    local item = ranked[i]
+    local severity = classify_severity(item.score, opts.severity_thresholds or {})
+    severity_counts[severity] = (severity_counts[severity] or 0) + 1
+    top[#top + 1] = {
+      rank = i,
+      symbol = item.symbol,
+      score = item.score,
+      severity = severity,
+      in_degree = item.in_degree,
+      out_degree = item.out_degree,
+      bridge = item.bridge,
+      scc_id = item.scc_id,
+      scc_size = item.scc_size,
+      in_cycle = item.in_cycle,
+      rationale = string.format(
+        "deg=%d bridge=%d scc=%d cycle=%s",
+        item.in_degree + item.out_degree,
+        item.bridge,
+        item.scc_size,
+        tostring(item.in_cycle)
+      ),
+    }
+  end
+
+  local cluster = complexity_cluster_metrics(index, symbol_ids)
+  local cycle_scc_count = 0
+  for _, scc in ipairs(sccs) do
+    if scc.has_cycle then
+      cycle_scc_count = cycle_scc_count + 1
+    end
+  end
+
+  local scc_limit = math.max(1, tonumber(opts.scc_limit) or 10)
+  local top_sccs = {}
+  for i = 1, math.min(scc_limit, #sccs) do
+    local scc = sccs[i]
+    local labels = {}
+    for j = 1, math.min(4, #scc.symbols) do
+      local symbol = nodes[scc.symbols[j]]
+      if symbol then
+        labels[#labels + 1] = symbol.name
+      end
+    end
+    top_sccs[#top_sccs + 1] = {
+      id = scc.id,
+      size = scc.size,
+      has_cycle = scc.has_cycle,
+      density = scc.density,
+      edge_count = scc.edge_count,
+      preview = labels,
+      symbols = scc.symbols,
+    }
+  end
+
+  local total_complexity = 0
+  for _, item in ipairs(ranked) do
+    total_complexity = total_complexity + item.score
+  end
+  local avg_complexity = #ranked > 0 and (total_complexity / #ranked) or 0
+  local structural_score = avg_complexity
+    + (cycle_scc_count * 0.8)
+    + (cluster.max_cluster_density * 12)
+  local overall_severity = classify_severity(structural_score, opts.severity_thresholds or {})
+
+  local suggestions = {}
+  if cycle_scc_count > 0 then
+    local largest_cycle = 0
+    for _, scc in ipairs(sccs) do
+      if scc.has_cycle then
+        largest_cycle = math.max(largest_cycle, scc.size)
+      end
+    end
+    if largest_cycle >= (tonumber(opts.suggestion_scc_size) or 6) then
+      suggestions[#suggestions + 1] = string.format(
+        "Large cycle detected (largest SCC size=%d). Consider extracting boundaries/interfaces to break recursive dependencies.",
+        largest_cycle
+      )
+    else
+      suggestions[#suggestions + 1] = "Cyclic SCCs exist. Prioritize untangling cycle entry nodes to reduce change amplification."
+    end
+  end
+
+  if (cluster.max_cluster_density or 0) >= (tonumber(opts.suggestion_density) or 0.35) then
+    suggestions[#suggestions + 1] = string.format(
+      "High module density detected (max=%.3f). Split dense modules or enforce stricter internal layering.",
+      cluster.max_cluster_density
+    )
+  end
+
+  local bridge_hotspots = 0
+  for _, item in ipairs(top) do
+    if (item.bridge or 0) >= (tonumber(opts.suggestion_top_bridge) or 6) then
+      bridge_hotspots = bridge_hotspots + 1
+    end
+  end
+  if bridge_hotspots > 0 then
+    suggestions[#suggestions + 1] = string.format(
+      "%d hotspot(s) behave as bridges (high min(in,out)). Add focused regression tests before refactors.",
+      bridge_hotspots
+    )
+  end
+
+  if #suggestions == 0 then
+    suggestions[#suggestions + 1] = "Complexity looks manageable at current thresholds. Keep monitoring SCC growth over time."
+  end
+
+  return {
+    generated_at = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+    root = index.root,
+    total_symbols = #(index.symbols or {}),
+    analyzed_symbols = #symbol_ids,
+    scc_count = #sccs,
+    cycle_scc_count = cycle_scc_count,
+    cyclic_symbol_count = cyclic_count,
+    structural_complexity_score = structural_score,
+    structural_complexity_severity = overall_severity,
+    average_symbol_complexity = avg_complexity,
+    severity_counts = severity_counts,
+    hotspots = top,
+    sccs = top_sccs,
+    cluster = cluster,
+    suggestions = suggestions,
+    options = {
+      top_n = top_n,
+      scc_limit = scc_limit,
+      include_tests = to_bool(opts.include_tests, false),
+      severity_thresholds = opts.severity_thresholds,
+      suggestion_scc_size = opts.suggestion_scc_size,
+      suggestion_density = opts.suggestion_density,
+      suggestion_top_bridge = opts.suggestion_top_bridge,
+      weights = {
+        cycle = opts.cycle_weight,
+        degree = opts.degree_weight,
+        bridge = opts.bridge_weight,
+        scc_size = opts.scc_size_weight,
+      },
+    },
+  }, nil
+end
+
+function M.write_complexity_report(path, report, opts)
+  if not path or path == "" then
+    return nil, "report path is required"
+  end
+  if not report then
+    return nil, "complexity report is required"
+  end
+
+  opts = opts or {}
+  local format = tostring(opts.format or "json"):lower()
+  if format ~= "json" and format ~= "jsonl" then
+    return nil, "unsupported format"
+  end
+
+  local dir = vim.fs.dirname(path)
+  if dir and dir ~= "" then
+    vim.fn.mkdir(dir, "p")
+  end
+
+  local payload = vim.deepcopy(report)
+  local pretty = to_bool(opts.pretty, true)
+  local lines = {}
+
+  if format == "jsonl" then
+    lines[#lines + 1] = vim.json.encode(payload)
+  else
+    local encoded = vim.json.encode(payload)
+    if pretty then
+      local ok, decoded = pcall(vim.json.decode, encoded)
+      if ok then
+        encoded = vim.json.encode(decoded)
+      end
+    end
+    for line in (encoded .. "\n"):gmatch("([^\n]*)\n") do
+      lines[#lines + 1] = line
+    end
+  end
+
+  vim.fn.writefile(lines, path)
+  return {
+    path = path,
+    bytes = #table.concat(lines, "\n"),
+    format = format,
+  }, nil
+end
+
+function M.risk_map_report(index, opts)
+  if not index then
+    return nil, "project index unavailable"
+  end
+
+  opts = vim.tbl_deep_extend("force", {
+    top_n = 20,
+    include_tests = false,
+    include_churn = true,
+    churn_limit = 60,
+    churn_since = nil,
+    churn_timeout_ms = 5000,
+    weight_hot_path = 1.3,
+    weight_complexity = 1.1,
+    weight_architecture = 1.6,
+    weight_churn = 0.35,
+    severity_thresholds = {
+      critical = 2.2,
+      high = 1.4,
+      medium = 0.8,
+    },
+    baseline_path = nil,
+    architecture = {
+      include_tests = false,
+      unknown_layer_policy = "allow",
+      max_violation_examples = 8,
+    },
+  }, opts or {})
+
+  local hot, hot_err = M.hot_path_report(index, {
+    top_n = math.max(1, #(index.symbols or {})),
+    include_tests = opts.include_tests,
+    include_churn = opts.include_churn,
+    churn_limit = opts.churn_limit,
+    churn_since = opts.churn_since,
+    churn_timeout_ms = opts.churn_timeout_ms,
+    weight_in = 2.2,
+    weight_out = 1.6,
+    weight_balance = 2.4,
+    weight_reach = 1.1,
+    weight_churn = 0.15,
+  })
+  if not hot then
+    return nil, hot_err
+  end
+
+  local complexity, complexity_err = M.complexity_report(index, {
+    top_n = math.max(1, #(index.symbols or {})),
+    include_tests = opts.include_tests,
+    scc_limit = 50,
+  })
+  if not complexity then
+    return nil, complexity_err
+  end
+
+  local architecture, architecture_err = M.architecture_report(index, opts.architecture)
+  if not architecture then
+    return nil, architecture_err
+  end
+
+  local churn_by_path, churn_meta = file_churn_map(index.root, {
+    include_churn = opts.include_churn,
+    churn_limit = opts.churn_limit,
+    churn_since = opts.churn_since,
+    churn_timeout_ms = opts.churn_timeout_ms,
+  })
+
+  local hot_map = {}
+  local complexity_map = {}
+  local architecture_map = {}
+  local max_hot = 0
+  local max_complexity = 0
+  local max_churn = 0
+
+  for _, item in ipairs(hot.hotspots or {}) do
+    hot_map[item.symbol.id] = tonumber(item.score) or 0
+    max_hot = math.max(max_hot, hot_map[item.symbol.id])
+  end
+  for _, item in ipairs(complexity.hotspots or {}) do
+    complexity_map[item.symbol.id] = tonumber(item.score) or 0
+    max_complexity = math.max(max_complexity, complexity_map[item.symbol.id])
+  end
+
+  for _, symbol in ipairs(index.symbols or {}) do
+    local churn = tonumber(churn_by_path[symbol.relpath or symbol.path]) or 0
+    max_churn = math.max(max_churn, churn)
+  end
+
+  for _, violation in ipairs(architecture.violations or {}) do
+    for _, example in ipairs(violation.examples or {}) do
+      architecture_map[example.source_symbol_id] = (architecture_map[example.source_symbol_id] or 0) + 1
+      architecture_map[example.target_symbol_id] = (architecture_map[example.target_symbol_id] or 0) + 1
+    end
+  end
+
+  local by_symbol = {}
+  local by_module = {}
+  local by_package = {}
+  for _, symbol in ipairs(index.symbols or {}) do
+    if opts.include_tests or not is_test_symbol(symbol) then
+      local hot_score = tonumber(hot_map[symbol.id]) or 0
+      local complexity_score = tonumber(complexity_map[symbol.id]) or 0
+      local architecture_hits = tonumber(architecture_map[symbol.id]) or 0
+      local churn = tonumber(churn_by_path[symbol.relpath or symbol.path]) or 0
+
+      local normalized_hot = max_hot > 0 and (hot_score / max_hot) or 0
+      local normalized_complexity = max_complexity > 0 and (complexity_score / max_complexity) or 0
+      local normalized_churn = max_churn > 0 and (churn / max_churn) or 0
+
+      local score = (normalized_hot * opts.weight_hot_path)
+        + (normalized_complexity * opts.weight_complexity)
+        + (architecture_hits * opts.weight_architecture)
+        + (normalized_churn * opts.weight_churn)
+
+      local item = {
+        symbol = symbol,
+        score = score,
+        hot_score = hot_score,
+        complexity_score = complexity_score,
+        architecture_hits = architecture_hits,
+        churn = churn,
+        rationale = string.format(
+          "hot=%.2f complexity=%.2f arch_hits=%d churn=%d",
+          normalized_hot,
+          normalized_complexity,
+          architecture_hits,
+          churn
+        ),
+      }
+      by_symbol[#by_symbol + 1] = item
+
+      local module_id = symbol.module_id or "(unknown)"
+      by_module[module_id] = by_module[module_id] or { id = module_id, score = 0, count = 0 }
+      by_module[module_id].score = by_module[module_id].score + score
+      by_module[module_id].count = by_module[module_id].count + 1
+
+      local package_id = symbol.package_id or "(root)"
+      by_package[package_id] = by_package[package_id] or { id = package_id, score = 0, count = 0 }
+      by_package[package_id].score = by_package[package_id].score + score
+      by_package[package_id].count = by_package[package_id].count + 1
+    end
+  end
+
+  table.sort(by_symbol, function(a, b)
+    if a.score == b.score then
+      return symbol_label(a.symbol) < symbol_label(b.symbol)
+    end
+    return a.score > b.score
+  end)
+
+  local function ranked_groups(map)
+    local out = {}
+    for _, item in pairs(map) do
+      out[#out + 1] = {
+        id = item.id,
+        score = item.score,
+        count = item.count,
+        avg_score = item.count > 0 and (item.score / item.count) or 0,
+      }
+    end
+    table.sort(out, function(a, b)
+      if a.avg_score == b.avg_score then
+        return a.score > b.score
+      end
+      return a.avg_score > b.avg_score
+    end)
+    return out
+  end
+
+  local top_n = math.max(1, tonumber(opts.top_n) or 20)
+  local top_symbols = {}
+  local severity_counts = {
+    critical = 0,
+    high = 0,
+    medium = 0,
+    low = 0,
+  }
+  for i = 1, math.min(top_n, #by_symbol) do
+    local item = by_symbol[i]
+    local severity = classify_severity(item.score, opts.severity_thresholds or {})
+    severity_counts[severity] = (severity_counts[severity] or 0) + 1
+    top_symbols[#top_symbols + 1] = {
+      rank = i,
+      symbol = item.symbol,
+      score = item.score,
+      severity = severity,
+      hot_score = item.hot_score,
+      complexity_score = item.complexity_score,
+      architecture_hits = item.architecture_hits,
+      churn = item.churn,
+      rationale = item.rationale,
+    }
+  end
+
+  local module_rank = ranked_groups(by_module)
+  local package_rank = ranked_groups(by_package)
+
+  local function compute_overall_severity(items)
+    local max_score = 0
+    for _, item in ipairs(items or {}) do
+      max_score = math.max(max_score, tonumber(item.score) or 0)
+    end
+    return classify_severity(max_score, opts.severity_thresholds or {})
+  end
+
+  local suggestions = {}
+  if tonumber(architecture.violation_count) and tonumber(architecture.violation_count) > 0 then
+    suggestions[#suggestions + 1] = string.format(
+      "Resolve architecture rule violations first (%d detected) to reduce structural risk spread.",
+      tonumber(architecture.violation_count) or 0
+    )
+  end
+
+  local churn_heavy = 0
+  for _, item in ipairs(top_symbols) do
+    if tonumber(item.churn or 0) >= 400 then
+      churn_heavy = churn_heavy + 1
+    end
+  end
+  if churn_heavy > 0 then
+    suggestions[#suggestions + 1] = string.format(
+      "%d top hotspot(s) show high churn. Add stricter review and regression checks on these files.",
+      churn_heavy
+    )
+  end
+
+  local arch_heavy = 0
+  for _, item in ipairs(top_symbols) do
+    if tonumber(item.architecture_hits or 0) > 0 then
+      arch_heavy = arch_heavy + 1
+    end
+  end
+  if arch_heavy > 0 then
+    suggestions[#suggestions + 1] = string.format(
+      "%d top hotspot(s) are linked to architecture violations. Prioritize boundary cleanup before large refactors.",
+      arch_heavy
+    )
+  end
+
+  if #suggestions == 0 then
+    suggestions[#suggestions + 1] = "No dominant risk driver detected in top hotspots; keep monitoring trend deltas between snapshots."
+  end
+
+  local trend = {
+    enabled = false,
+    baseline_path = opts.baseline_path,
+  }
+
+  if opts.baseline_path and tostring(opts.baseline_path) ~= "" and vim.fn.filereadable(opts.baseline_path) == 1 then
+    local baseline_text = table.concat(vim.fn.readfile(opts.baseline_path), "\n")
+    local ok, baseline = pcall(vim.json.decode, baseline_text)
+    if ok and type(baseline) == "table" then
+      trend.enabled = true
+      trend.baseline_generated_at = baseline.generated_at
+
+      local current_top = top_symbols
+      local previous_top = baseline.risk_hotspots or {}
+
+      local function avg_top(items)
+        if not items or #items == 0 then
+          return 0
+        end
+        local sum = 0
+        for _, item in ipairs(items) do
+          sum = sum + (tonumber(item.score) or 0)
+        end
+        return sum / #items
+      end
+
+      local current_avg = avg_top(current_top)
+      local previous_avg = avg_top(previous_top)
+      trend.avg_top_score_delta = current_avg - previous_avg
+
+      local current_top1 = tonumber((current_top[1] or {}).score) or 0
+      local previous_top1 = tonumber((previous_top[1] or {}).score) or 0
+      trend.top1_score_delta = current_top1 - previous_top1
+
+      local previous_ids = {}
+      for _, item in ipairs(previous_top) do
+        local symbol = item.symbol or {}
+        local key = tostring(symbol.id or (symbol.path and (symbol.path .. ":" .. tostring((symbol.range or {})[1])) or ""))
+        if key ~= "" then
+          previous_ids[key] = true
+        end
+      end
+
+      local overlap = 0
+      for _, item in ipairs(current_top) do
+        local symbol = item.symbol or {}
+        local key = tostring(symbol.id or (symbol.path and (symbol.path .. ":" .. tostring((symbol.range or {})[1])) or ""))
+        if key ~= "" and previous_ids[key] then
+          overlap = overlap + 1
+        end
+      end
+      trend.top_overlap_count = overlap
+      trend.top_overlap_ratio = (#current_top > 0) and (overlap / #current_top) or 0
+    else
+      trend.error = "failed to decode baseline snapshot"
+    end
+  elseif opts.baseline_path and tostring(opts.baseline_path) ~= "" then
+    trend.error = "baseline snapshot not found"
+  end
+
+  return {
+    generated_at = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+    root = index.root,
+    total_symbols = #(index.symbols or {}),
+    analyzed_symbols = #by_symbol,
+    risk_severity = compute_overall_severity(top_symbols),
+    severity_counts = severity_counts,
+    risk_hotspots = top_symbols,
+    module_risk = module_rank,
+    package_risk = package_rank,
+    architecture_violation_count = tonumber(architecture.violation_count) or 0,
+    churn = churn_meta,
+    suggestions = suggestions,
+    trend = trend,
+    options = {
+      top_n = top_n,
+      include_tests = to_bool(opts.include_tests, false),
+      include_churn = to_bool(opts.include_churn, true),
+      churn_limit = opts.churn_limit,
+      churn_since = opts.churn_since,
+      baseline_path = opts.baseline_path,
+      severity_thresholds = opts.severity_thresholds,
+      weights = {
+        hot_path = opts.weight_hot_path,
+        complexity = opts.weight_complexity,
+        architecture = opts.weight_architecture,
+        churn = opts.weight_churn,
+      },
+    },
+  }, nil
+end
+
+function M.write_risk_map_report(path, report, opts)
+  if not path or path == "" then
+    return nil, "report path is required"
+  end
+  if not report then
+    return nil, "risk map report is required"
+  end
+
+  opts = opts or {}
+  local format = tostring(opts.format or "json"):lower()
+  if format ~= "json" and format ~= "jsonl" then
+    return nil, "unsupported format"
+  end
+
+  local dir = vim.fs.dirname(path)
+  if dir and dir ~= "" then
+    vim.fn.mkdir(dir, "p")
+  end
+
+  local payload = vim.deepcopy(report)
+  local pretty = to_bool(opts.pretty, true)
+  local lines = {}
+
+  if format == "jsonl" then
+    lines[#lines + 1] = vim.json.encode(payload)
+  else
+    local encoded = vim.json.encode(payload)
+    if pretty then
+      local ok, decoded = pcall(vim.json.decode, encoded)
+      if ok then
+        encoded = vim.json.encode(decoded)
+      end
+    end
+    for line in (encoded .. "\n"):gmatch("([^\n]*)\n") do
+      lines[#lines + 1] = line
+    end
+  end
+
+  vim.fn.writefile(lines, path)
+  return {
+    path = path,
+    bytes = #table.concat(lines, "\n"),
+    format = format,
+  }, nil
+end
+
 function M.impact_for_symbol(index, root_symbol_id, opts)
   if not index then
     return nil, "project index unavailable"
