@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: ["dev", "main"]
+  pull_request:
+
+jobs:
+  headless-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Neovim 0.10
+        run: |
+          curl -LO https://github.com/neovim/neovim/releases/download/v0.10.2/nvim-linux64.tar.gz
+          tar xzf nvim-linux64.tar.gz
+          sudo mv nvim-linux64 /opt/nvim
+          echo "/opt/nvim/bin" >> $GITHUB_PATH
+
+      - name: Verify Neovim
+        run: nvim --version
+
+      - name: Run smoke tests
+        run: |
+          nvim --headless --clean -u tests/minimal_init.lua +"luafile tests/headless/current_function_detection.lua" +qall
+          nvim --headless --clean -u tests/minimal_init.lua +"luafile tests/headless/project_call_graph.lua" +qall
+          nvim --headless --clean -u tests/minimal_init.lua +"luafile tests/headless/architecture_graph.lua" +qall
+          nvim --headless --clean -u tests/minimal_init.lua +"luafile tests/headless/code_evolution_graph.lua" +qall
+          nvim --headless --clean -u tests/minimal_init.lua +"luafile tests/headless/interactive_graph_viewer.lua" +qall
+          nvim --headless --clean -u tests/minimal_init.lua +"luafile tests/headless/hot_path_detection.lua" +qall
+          nvim --headless --clean -u tests/minimal_init.lua +"luafile tests/headless/complexity_analysis.lua" +qall
+          nvim --headless --clean -u tests/minimal_init.lua +"luafile tests/headless/risk_map_report.lua" +qall

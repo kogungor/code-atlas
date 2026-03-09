@@ -1,6 +1,6 @@
 # code-atlas playground
 
-Use this folder to test each feature incrementally in a clean Neovim session.
+Use this folder to test capabilities incrementally in a clean Neovim session.
 
 ## Quick start
 
@@ -16,7 +16,7 @@ Then run:
 :CodeAtlas
 ```
 
-Make sure the cursor is inside a function to test Feature 2 detection.
+Make sure the cursor is inside a function for current-function detection.
 
 ## Extended use-case sample
 
@@ -82,9 +82,9 @@ To preview the unified knowledge graph summary and write a snapshot:
 :CodeAtlasKnowledge path=/tmp/code-atlas-knowledge.jsonl format=jsonl include_tests=false
 ```
 
-## Workflow for each new feature
+## Workflow for each new capability
 
 1. Add or update a sample file in `playground/samples/`.
 2. Open Neovim with `minimal_init.lua`.
-3. Run the command(s) introduced by the feature.
+3. Run the command(s) introduced by the capability.
 4. Capture any regressions in `playground/notes.md`.
