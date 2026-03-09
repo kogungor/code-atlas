@@ -551,13 +551,115 @@ end
 
 local function extract_functions(path, lang)
   local query = query_for_language(lang)
-  if not query then
-    return {}
-  end
 
   local lines = file_lines(path)
   if not lines then
     return {}
+  end
+
+  local function fallback_range(start_row, start_col)
+    local open_row = nil
+    local open_col = nil
+
+    for row = start_row, #lines do
+      local line = lines[row]
+      local col = line:find("{", 1, true)
+      if col then
+        open_row = row - 1
+        open_col = col - 1
+        break
+      end
+      if row - start_row > 80 then
+        break
+      end
+    end
+
+    if open_row == nil then
+      local text = lines[start_row] or ""
+      return start_row - 1, math.max(start_col + 1, #text)
+    end
+
+    local depth = 0
+    for row = open_row + 1, #lines do
+      local text = lines[row]
+      local col_start = 1
+      if row == open_row + 1 then
+        col_start = open_col + 2
+      end
+      for col = col_start, #text do
+        local ch = text:sub(col, col)
+        if ch == "{" then
+          depth = depth + 1
+        elseif ch == "}" then
+          if depth == 0 then
+            return row - 1, col
+          end
+          depth = depth - 1
+        end
+      end
+    end
+
+    local last_row = #lines
+    return last_row - 1, #(lines[last_row] or "")
+  end
+
+  local function fallback_typescript_functions()
+    if lang ~= "typescript" and lang ~= "javascript" then
+      return {}
+    end
+
+    local out = {}
+    local seen = {}
+    local function add_symbol(name, row, col)
+      if not name or name == "" then
+        return
+      end
+      local key = string.format("%s:%d:%s", name, row, col)
+      if seen[key] then
+        return
+      end
+      seen[key] = true
+      local er, ec = fallback_range(row, col)
+      out[#out + 1] = {
+        id = string.format("%s:%d:%d:%s", path, row, col, name),
+        name = name,
+        short_name = name,
+        container = nil,
+        symbol_kind = "Function",
+        node_type = "fallback_function",
+        lang = lang,
+        path = path,
+        relpath = path,
+        range = { row - 1, col, er, ec },
+        calls = {},
+        receiver_types = {},
+      }
+    end
+
+    for i, line in ipairs(lines) do
+      local name = line:match("^%s*export%s+async%s+function%s+([%a_][%w_$]*)%s*%(")
+        or line:match("^%s*export%s+function%s+([%a_][%w_$]*)%s*%(")
+        or line:match("^%s*async%s+function%s+([%a_][%w_$]*)%s*%(")
+        or line:match("^%s*function%s+([%a_][%w_$]*)%s*%(")
+        or line:match("^%s*export%s+const%s+([%a_][%w_$]*)%s*=%s*async%s*%(")
+        or line:match("^%s*export%s+const%s+([%a_][%w_$]*)%s*=%s*%(")
+        or line:match("^%s*const%s+([%a_][%w_$]*)%s*=%s*async%s*%(")
+        or line:match("^%s*const%s+([%a_][%w_$]*)%s*=%s*%(")
+        or line:match("^%s*let%s+([%a_][%w_$]*)%s*=%s*async%s*%(")
+        or line:match("^%s*let%s+([%a_][%w_$]*)%s*=%s*%(")
+        or line:match("^%s*var%s+([%a_][%w_$]*)%s*=%s*async%s*%(")
+        or line:match("^%s*var%s+([%a_][%w_$]*)%s*=%s*%(")
+      if name then
+        local col = (line:find(name, 1, true) or 1) - 1
+        add_symbol(name, i, col)
+      end
+    end
+
+    return out
+  end
+
+  if not query then
+    return fallback_typescript_functions()
   end
 
   local buf = vim.api.nvim_create_buf(false, true)
@@ -567,14 +669,14 @@ local function extract_functions(path, lang)
   local parser_ok, parser = pcall(vim.treesitter.get_parser, buf, lang)
   if not parser_ok or not parser then
     vim.api.nvim_buf_delete(buf, { force = true })
-    return {}
+    return fallback_typescript_functions()
   end
 
   local trees = parser:parse()
   local tree = trees and trees[1]
   if not tree then
     vim.api.nvim_buf_delete(buf, { force = true })
-    return {}
+    return fallback_typescript_functions()
   end
 
   local root = tree:root()
@@ -629,6 +731,9 @@ local function extract_functions(path, lang)
   end
 
   vim.api.nvim_buf_delete(buf, { force = true })
+  if #symbols == 0 then
+    return fallback_typescript_functions()
+  end
   return symbols
 end
 

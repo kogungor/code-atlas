@@ -97,6 +97,78 @@ Example using Lua setup:
     (dot), and mermaid. Layout supports hierarchical or force metadata.
     Path defaults to the current working directory.
 
+- :CodeAtlasKnowledge [path|path=...] [format=json|jsonl]
+                      [include_tests=bool] [include_imports=bool]
+                      [include_types=bool] [include_external=bool]
+    Build a unified knowledge graph summary. If path is provided, write a
+    snapshot with schema_version "knowledge_graph.v1".
+
+- :CodeAtlasArchitecture [include_tests=bool]
+                         [unknown_policy=allow|deny]
+                         [max_examples=N]
+                         [path=...]
+                         [format=json]
+                         [pretty=bool]
+    Show architecture layer/domain grouping, dependency edges, and rule
+    violations with example callsites. If path is provided, write a JSON
+    snapshot.
+
+- :CodeAtlasEvolution [limit=N]
+                      [hotspot_limit=N]
+                      [include_merges=bool]
+                      [since=...]
+                      [path=...]
+                      [out=...]
+                      [format=json|jsonl]
+                      [pretty=bool]
+                      [timeout_ms=N]
+    Show git-based evolution timeline with commit churn and file/symbol
+    hotspots. If out is provided, write a snapshot.
+
+- :CodeAtlasViewer [incoming|outgoing]
+                   [depth=N]
+                   [dynamic_only=bool]
+                   [kind=all|function|method]
+                   [filter=path_prefix]
+                   [search=query]
+    Open interactive graph viewer with focus, filter, search, and
+    zoom/pan-style navigation shortcuts.
+
+- :CodeAtlasHotPath [incoming|outgoing]
+                    [top=N]
+                    [max_depth=N]
+                    [path_depth=N]
+                    [path_count=N]
+                    [include_tests=bool]
+                    [include_churn=bool]
+                    [churn_limit=N]
+                    [churn_since=...]
+                    [churn_weight=N]
+    Rank hotspot symbols and critical call chains using degree and
+    bounded-reach centrality heuristics.
+
+- :CodeAtlasComplexity [top=N]
+                       [scc_limit=N]
+                       [include_tests=bool]
+                       [path=...]
+                       [format=json|jsonl]
+                       [pretty=bool]
+    Compute SCC/cycle-based complexity and cluster metrics. If path is
+    provided, write a complexity snapshot.
+
+- :CodeAtlasRiskMap [top=N]
+                    [include_tests=bool]
+                    [include_churn=bool]
+                    [churn_limit=N]
+                    [churn_since=...]
+                    [churn_weight=N]
+                    [baseline_path=...]
+                    [path=...]
+                    [format=json|jsonl]
+                    [pretty=bool]
+    Build a combined risk map from architecture violations, hot-path
+    centrality, structural complexity, and optional git churn.
+
 - :CodeAtlasUI tree|ascii
     Switch graph UI mode.
 
@@ -141,6 +213,88 @@ Default configuration:
       max_width = 0.8,
       max_height = 0.8,
     },
+    architecture = {
+      include_tests = false,
+      unknown_layer_policy = "allow",
+      max_violation_examples = 3,
+      export_format = "json",
+      export_pretty = true,
+      layer_by_top_dir = { tests = "test" },
+      layer_by_path_prefix = {},
+      layer_by_module_prefix = {},
+      domain_by_top_dir = {},
+      domain_by_path_prefix = {},
+      domain_path_segment = 2,
+      rules = {},
+      rules_mode = "merge",
+      severity_thresholds = { critical = 90, high = 70, medium = 55 },
+    },
+    evolution = {
+      limit = 30,
+      hotspot_limit = 10,
+      include_merges = false,
+      since = nil,
+      path = nil,
+      timeout_ms = 5000,
+      export_format = "json",
+      export_pretty = true,
+    },
+    viewer = {
+      depth_limit = 3,
+      direction = "outgoing",
+      dynamic_only = false,
+      node_kind = "all",
+      filter_path_prefix = nil,
+      search_query = nil,
+    },
+    hot_path = {
+      top_n = 10,
+      max_depth = 4,
+      path_depth = 5,
+      path_count = 5,
+      include_tests = false,
+      include_churn = true,
+      churn_limit = 60,
+      churn_since = nil,
+      churn_timeout_ms = 5000,
+      direction = "outgoing",
+      weight_in = 2.2,
+      weight_out = 1.6,
+      weight_balance = 2.4,
+      weight_reach = 1.1,
+      weight_churn = 0.15,
+    },
+    complexity = {
+      top_n = 15,
+      scc_limit = 10,
+      include_tests = false,
+      cycle_weight = 12,
+      degree_weight = 1.0,
+      bridge_weight = 1.5,
+      scc_size_weight = 0.7,
+      severity_thresholds = { critical = 70, high = 45, medium = 25 },
+      suggestion_scc_size = 6,
+      suggestion_density = 0.35,
+      suggestion_top_bridge = 6,
+      export_format = "json",
+      export_pretty = true,
+    },
+    risk_map = {
+      top_n = 20,
+      include_tests = false,
+      include_churn = true,
+      churn_limit = 60,
+      churn_since = nil,
+      churn_timeout_ms = 5000,
+      weight_hot_path = 1.3,
+      weight_complexity = 1.1,
+      weight_architecture = 1.6,
+      weight_churn = 0.35,
+      severity_thresholds = { critical = 2.2, high = 1.4, medium = 0.8 },
+      baseline_path = nil,
+      export_format = "json",
+      export_pretty = true,
+    },
   }
 <
 
@@ -161,6 +315,76 @@ Fields:
   ui.border     Floating window border style.
   ui.max_width  Max floating width ratio of editor columns.
   ui.max_height Max floating height ratio of editor lines.
+  architecture.include_tests  Include test symbols in architecture groups.
+  architecture.unknown_layer_policy  Allow/deny dependencies for unknown layers.
+  architecture.max_violation_examples  Max violation examples per edge.
+  architecture.export_format  Snapshot format for architecture report.
+  architecture.export_pretty  Pretty-print architecture snapshot output.
+  architecture.layer_by_top_dir  Top-directory to layer override map.
+  architecture.layer_by_path_prefix  Path-prefix to layer override map.
+  architecture.layer_by_module_prefix  Module-prefix to layer override map.
+  architecture.domain_by_top_dir  Top-directory to domain override map.
+  architecture.domain_by_path_prefix  Path-prefix to domain override map.
+  architecture.domain_path_segment  Path segment index used for domain grouping.
+  architecture.rules  Layer dependency rule overrides.
+  architecture.rules_mode  "merge" to extend defaults, "replace" for full custom rules.
+  architecture.severity_thresholds  Thresholds for violation severity buckets.
+  evolution.limit  Number of commits to analyze.
+  evolution.hotspot_limit  Number of hotspot items in each section.
+  evolution.include_merges  Include merge commits in timeline.
+  evolution.since  Git log since-range expression.
+  evolution.path  Optional path filter for git history.
+  evolution.timeout_ms  Timeout for git history command.
+  evolution.export_format  Snapshot format for evolution report.
+  evolution.export_pretty  Pretty-print evolution snapshot output.
+  viewer.depth_limit  Traversal depth for interactive viewer.
+  viewer.direction  Initial graph direction (incoming/outgoing).
+  viewer.dynamic_only  Show only dynamic/polymorphic edges.
+  viewer.node_kind  Node kind filter: all/function/method.
+  viewer.filter_path_prefix  Optional path-prefix filter.
+  viewer.search_query  Optional initial search query.
+  hot_path.top_n  Number of ranked hotspot symbols.
+  hot_path.max_depth  Depth bound for transitive reach score.
+  hot_path.path_depth  Maximum length of each reported hot chain.
+  hot_path.path_count  Number of reported hot chains.
+  hot_path.include_tests  Include test symbols in ranking.
+  hot_path.include_churn  Include git churn into risk score.
+  hot_path.churn_limit  Number of recent commits for churn aggregation.
+  hot_path.churn_since  Optional git since-window for churn aggregation.
+  hot_path.churn_timeout_ms  Timeout for churn git history query.
+  hot_path.direction  Chain traversal direction (incoming/outgoing).
+  hot_path.weight_in  Weight for fan-in contribution.
+  hot_path.weight_out  Weight for fan-out contribution.
+  hot_path.weight_balance  Weight for bridge-like balance term.
+  hot_path.weight_reach  Weight for bounded transitive reach.
+  hot_path.weight_churn  Weight for git churn contribution.
+  complexity.top_n  Number of ranked complexity hotspots.
+  complexity.scc_limit  Number of SCC groups shown in report.
+  complexity.include_tests  Include test symbols in complexity analysis.
+  complexity.cycle_weight  Weight for cycle participation.
+  complexity.degree_weight  Weight for in/out degree contribution.
+  complexity.bridge_weight  Weight for bridge-like min(in,out) contribution.
+  complexity.scc_size_weight  Weight for SCC size contribution.
+  complexity.severity_thresholds  Severity bands for complexity score.
+  complexity.suggestion_scc_size  SCC size threshold for refactor suggestion.
+  complexity.suggestion_density  Density threshold for modularization suggestion.
+  complexity.suggestion_top_bridge  Bridge threshold for test-hardening suggestion.
+  complexity.export_format  Snapshot format for complexity report.
+  complexity.export_pretty  Pretty-print complexity snapshot output.
+  risk_map.top_n  Number of ranked risk hotspots.
+  risk_map.include_tests  Include test symbols in risk scoring.
+  risk_map.include_churn  Include git churn in risk scoring.
+  risk_map.churn_limit  Number of recent commits for churn aggregation.
+  risk_map.churn_since  Optional git since-window for churn aggregation.
+  risk_map.churn_timeout_ms  Timeout for risk churn history query.
+  risk_map.weight_hot_path  Weight for hot-path contribution.
+  risk_map.weight_complexity  Weight for complexity contribution.
+  risk_map.weight_architecture  Weight for architecture-violation contribution.
+  risk_map.weight_churn  Weight for churn contribution.
+  risk_map.severity_thresholds  Severity bands for risk score.
+  risk_map.baseline_path  Optional baseline snapshot path for trend deltas.
+  risk_map.export_format  Snapshot format for risk report.
+  risk_map.export_pretty  Pretty-print risk snapshot output.
 
 ==============================================================================
 6. Limitations                                                *code-atlas-limitations*
@@ -172,6 +396,13 @@ Fields:
 - Polymorphic callsites are shown as dynamic edges with alternative targets (best-effort).
 - LSP call hierarchy availability depends on language server support.
 - Very large repositories may require stronger indexing guardrails.
+- Architecture layer grouping is heuristic and may need project-specific tuning.
+- Violation severity is heuristic and should be calibrated per project.
+- Evolution hotspots are heuristic and based on git churn + current index mapping.
+- Interactive viewer pan/zoom model is terminal-oriented and intentionally lightweight.
+- Hot path ranking is heuristic; churn weighting depends on available git history.
+- Complexity scoring is structural/heuristic and should be calibrated per project.
+- Risk map weighting is heuristic and should be tuned for your codebase priorities.
 
 ==============================================================================
 vim:tw=78:ts=8:ft=help:norl:

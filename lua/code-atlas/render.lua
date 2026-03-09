@@ -502,6 +502,7 @@ function M.project_graph_document(index, subgraph)
       end
     end
     line_actions[root_line or 3] = {
+      symbol_id = root_symbol.id,
       target = {
         path = root_symbol.path,
         row = root_symbol.range[1],
@@ -581,6 +582,7 @@ function M.project_graph_document(index, subgraph)
     end
     lines[#lines + 1] = string.format("%s%s %s%s", indent, branch, symbol_label(symbol), edge_note)
     line_actions[#lines] = {
+      symbol_id = symbol_id,
       target = {
         path = symbol.path,
         row = symbol.range[1],
@@ -685,6 +687,41 @@ function M.dependency_graph_document(dep_graph, subgraph, opts)
   }
 end
 
+function M.interactive_viewer_document(index, subgraph, viewer_state)
+  viewer_state = viewer_state or {}
+  local base = M.project_graph_document(index, subgraph)
+  local lines = {
+    "code-atlas interactive viewer",
+    "",
+    string.format("focus_root: %s", tostring(viewer_state.focus_root or subgraph.root_id)),
+    string.format("depth_limit: %d", tonumber(viewer_state.depth_limit or subgraph.depth_limit) or 0),
+    string.format("filter_path: %s", tostring(viewer_state.filter_path_prefix or "")),
+    string.format("search: %s", tostring(viewer_state.search_query or "")),
+    string.format("dynamic_only: %s", tostring(viewer_state.dynamic_only == true)),
+    string.format("node_kind: %s", tostring(viewer_state.node_kind or "all")),
+    string.format("history: %d", tonumber(viewer_state.focus_history_size) or 0),
+    string.format("hidden_nodes: %d", tonumber(viewer_state.hidden_nodes) or 0),
+    string.format("total_nodes_before_filter: %d", tonumber(viewer_state.total_nodes) or 0),
+    "controls: f focus | F reset | / search | n/N next/prev | s filter-path | k node-kind | d dynamic | +/- zoom | H/L pan in/out | r refresh | q close",
+    "",
+  }
+
+  for _, line in ipairs(base.lines or {}) do
+    lines[#lines + 1] = line
+  end
+
+  local line_actions = {}
+  local offset = 13
+  for line_no, action in pairs(base.line_actions or {}) do
+    line_actions[line_no + offset] = action
+  end
+
+  return {
+    lines = lines,
+    line_actions = line_actions,
+  }
+end
+
 function M.dead_code_document(report)
   local lines = {
     "code-atlas dead code report",
@@ -773,6 +810,603 @@ function M.impact_document(report)
     lines[#lines + 1] = "tests:"
     for _, symbol in ipairs(report.impacted_tests) do
       lines[#lines + 1] = string.format("  - %s - %s", symbol.name, symbol.relpath or symbol.path)
+    end
+  end
+
+  return {
+    lines = lines,
+    line_actions = line_actions,
+  }
+end
+
+function M.hot_path_document(report)
+  local lines = {
+    "code-atlas hot path detection",
+    "",
+    string.format("root: %s", tostring(report.root or "")),
+    string.format("generated_at: %s", tostring(report.generated_at or "")),
+    string.format("direction: %s", tostring(report.direction or "outgoing")),
+    string.format("total_symbols: %d", tonumber(report.total_symbols) or 0),
+    string.format("analyzed_symbols: %d", tonumber(report.analyzed_symbols) or 0),
+    string.format(
+      "churn: enabled=%s commits=%d files=%d total=%d",
+      tostring(((report.churn or {}).enabled) == true),
+      tonumber(((report.churn or {}).commits) or 0),
+      tonumber(((report.churn or {}).files) or 0),
+      tonumber(((report.churn or {}).total_churn) or 0)
+    ),
+    "",
+    "hotspots:",
+  }
+  local line_actions = {}
+
+  if not report.hotspots or #report.hotspots == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, item in ipairs(report.hotspots) do
+      local symbol = item.symbol
+      lines[#lines + 1] = string.format(
+        "  - #%d %.2f %s - %s",
+        tonumber(item.rank) or 0,
+        tonumber(item.score) or 0,
+        tostring(symbol and symbol.name or ""),
+        tostring(symbol and (symbol.relpath or symbol.path) or "")
+      )
+      line_actions[#lines] = {
+        target = {
+          path = symbol.path,
+          row = symbol.range[1],
+          col = symbol.range[2],
+        },
+      }
+      lines[#lines + 1] = string.format(
+        "      rationale: fan-in=%d fan-out=%d reach=%d balance=%d churn=%d",
+        tonumber(item.in_degree) or 0,
+        tonumber(item.out_degree) or 0,
+        tonumber(item.reach) or 0,
+        tonumber(item.balance) or 0,
+        tonumber(item.churn) or 0
+      )
+    end
+  end
+
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "hot_paths:"
+  if not report.hot_paths or #report.hot_paths == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, path_item in ipairs(report.hot_paths) do
+      lines[#lines + 1] = string.format(
+        "  - root_score=%.2f bottleneck=%.2f length=%d",
+        tonumber(path_item.root_score) or 0,
+        tonumber(path_item.bottleneck_score) or 0,
+        #(path_item.nodes or {})
+      )
+      for idx, node in ipairs(path_item.nodes or {}) do
+        lines[#lines + 1] = string.format(
+          "      %d. %.2f %s - %s",
+          idx,
+          tonumber(node.score) or 0,
+          tostring(node.name),
+          tostring(node.relpath or node.path)
+        )
+      end
+    end
+  end
+
+  return {
+    lines = lines,
+    line_actions = line_actions,
+  }
+end
+
+function M.complexity_document(report)
+  local lines = {
+    "code-atlas complexity analysis",
+    "",
+    string.format("root: %s", tostring(report.root or "")),
+    string.format("generated_at: %s", tostring(report.generated_at or "")),
+    string.format("total_symbols: %d", tonumber(report.total_symbols) or 0),
+    string.format("analyzed_symbols: %d", tonumber(report.analyzed_symbols) or 0),
+    string.format("scc_count: %d", tonumber(report.scc_count) or 0),
+    string.format("cycle_scc_count: %d", tonumber(report.cycle_scc_count) or 0),
+    string.format("cyclic_symbol_count: %d", tonumber(report.cyclic_symbol_count) or 0),
+    string.format("structural_complexity_score: %.2f", tonumber(report.structural_complexity_score) or 0),
+    string.format("severity: %s", tostring(report.structural_complexity_severity or "low")),
+    string.format(
+      "severity_counts: critical=%d high=%d medium=%d low=%d",
+      tonumber(((report.severity_counts or {}).critical) or 0),
+      tonumber(((report.severity_counts or {}).high) or 0),
+      tonumber(((report.severity_counts or {}).medium) or 0),
+      tonumber(((report.severity_counts or {}).low) or 0)
+    ),
+    string.format("average_symbol_complexity: %.2f", tonumber(report.average_symbol_complexity) or 0),
+    string.format(
+      "cluster: modules=%d max_density=%.3f",
+      tonumber(((report.cluster or {}).module_count) or 0),
+      tonumber(((report.cluster or {}).max_cluster_density) or 0)
+    ),
+    "",
+    "hotspots:",
+  }
+  local line_actions = {}
+  local line_highlights = {}
+
+  local severity_to_group = {
+    critical = "DiagnosticError",
+    high = "DiagnosticWarn",
+    medium = "DiagnosticInfo",
+    low = "DiagnosticHint",
+  }
+
+  if not report.hotspots or #report.hotspots == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, item in ipairs(report.hotspots) do
+      local symbol = item.symbol
+      lines[#lines + 1] = string.format(
+        "  - #%d [%-8s] %.2f %s - %s",
+        tonumber(item.rank) or 0,
+        tostring(item.severity or "low"),
+        tonumber(item.score) or 0,
+        tostring(symbol and symbol.name or ""),
+        tostring(symbol and (symbol.relpath or symbol.path) or "")
+      )
+      line_highlights[#line_highlights + 1] = {
+        line = #lines,
+        group = severity_to_group[tostring(item.severity or "low")] or "DiagnosticHint",
+      }
+      if symbol and symbol.path and symbol.range then
+        line_actions[#lines] = {
+          target = {
+            path = symbol.path,
+            row = symbol.range[1],
+            col = symbol.range[2],
+          },
+        }
+      end
+      lines[#lines + 1] = string.format(
+        "      rationale: deg=%d bridge=%d scc=%d cycle=%s",
+        tonumber(item.in_degree or 0) + tonumber(item.out_degree or 0),
+        tonumber(item.bridge) or 0,
+        tonumber(item.scc_size) or 0,
+        tostring(item.in_cycle)
+      )
+    end
+  end
+
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "suggestions:"
+  if not report.suggestions or #report.suggestions == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, tip in ipairs(report.suggestions) do
+      lines[#lines + 1] = "  - " .. tostring(tip)
+    end
+  end
+
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "sccs:"
+  if not report.sccs or #report.sccs == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, item in ipairs(report.sccs) do
+      lines[#lines + 1] = string.format(
+        "  - scc#%d size=%d cycle=%s density=%.3f edges=%d",
+        tonumber(item.id) or 0,
+        tonumber(item.size) or 0,
+        tostring(item.has_cycle),
+        tonumber(item.density) or 0,
+        tonumber(item.edge_count) or 0
+      )
+      if item.preview and #item.preview > 0 then
+        lines[#lines + 1] = "      preview: " .. table.concat(item.preview, ", ")
+      end
+    end
+  end
+
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "clusters:"
+  local clusters = ((report.cluster or {}).module_clusters) or {}
+  if #clusters == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for i = 1, math.min(8, #clusters) do
+      local item = clusters[i]
+      lines[#lines + 1] = string.format(
+        "  - %s symbols=%d edges=%d density=%.3f",
+        tostring(item.module_id),
+        tonumber(item.symbols) or 0,
+        tonumber(item.edges) or 0,
+        tonumber(item.density) or 0
+      )
+    end
+  end
+
+  return {
+    lines = lines,
+    line_actions = line_actions,
+    line_highlights = line_highlights,
+  }
+end
+
+function M.risk_map_document(report)
+  local lines = {
+    "code-atlas risk map",
+    "",
+    string.format("root: %s", tostring(report.root or "")),
+    string.format("generated_at: %s", tostring(report.generated_at or "")),
+    string.format("total_symbols: %d", tonumber(report.total_symbols) or 0),
+    string.format("analyzed_symbols: %d", tonumber(report.analyzed_symbols) or 0),
+    string.format("risk_severity: %s", tostring(report.risk_severity or "low")),
+    string.format(
+      "severity_counts: critical=%d high=%d medium=%d low=%d",
+      tonumber(((report.severity_counts or {}).critical) or 0),
+      tonumber(((report.severity_counts or {}).high) or 0),
+      tonumber(((report.severity_counts or {}).medium) or 0),
+      tonumber(((report.severity_counts or {}).low) or 0)
+    ),
+    string.format("architecture_violations: %d", tonumber(report.architecture_violation_count) or 0),
+    string.format(
+      "churn: enabled=%s commits=%d files=%d total=%d",
+      tostring(((report.churn or {}).enabled) == true),
+      tonumber(((report.churn or {}).commits) or 0),
+      tonumber(((report.churn or {}).files) or 0),
+      tonumber(((report.churn or {}).total_churn) or 0)
+    ),
+    "",
+    "risk_hotspots:",
+  }
+  local line_actions = {}
+  local line_highlights = {}
+
+  local severity_to_group = {
+    critical = "DiagnosticError",
+    high = "DiagnosticWarn",
+    medium = "DiagnosticInfo",
+    low = "DiagnosticHint",
+  }
+
+  if not report.risk_hotspots or #report.risk_hotspots == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, item in ipairs(report.risk_hotspots) do
+      local symbol = item.symbol
+      lines[#lines + 1] = string.format(
+        "  - #%d [%-8s] %.3f %s - %s",
+        tonumber(item.rank) or 0,
+        tostring(item.severity or "low"),
+        tonumber(item.score) or 0,
+        tostring(symbol and symbol.name or ""),
+        tostring(symbol and (symbol.relpath or symbol.path) or "")
+      )
+      line_highlights[#line_highlights + 1] = {
+        line = #lines,
+        group = severity_to_group[tostring(item.severity or "low")] or "DiagnosticHint",
+      }
+      if symbol and symbol.path and symbol.range then
+        line_actions[#lines] = {
+          target = {
+            path = symbol.path,
+            row = symbol.range[1],
+            col = symbol.range[2],
+          },
+        }
+      end
+      lines[#lines + 1] = "      rationale: " .. tostring(item.rationale)
+    end
+  end
+
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "suggestions:"
+  if not report.suggestions or #report.suggestions == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, tip in ipairs(report.suggestions) do
+      lines[#lines + 1] = "  - " .. tostring(tip)
+    end
+  end
+
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "trend:"
+  local trend = report.trend or {}
+  if trend.enabled then
+    lines[#lines + 1] = string.format("  - baseline_generated_at: %s", tostring(trend.baseline_generated_at or ""))
+    lines[#lines + 1] = string.format("  - avg_top_score_delta: %.3f", tonumber(trend.avg_top_score_delta) or 0)
+    lines[#lines + 1] = string.format("  - top1_score_delta: %.3f", tonumber(trend.top1_score_delta) or 0)
+    lines[#lines + 1] = string.format("  - top_overlap: %d (%.2f)", tonumber(trend.top_overlap_count) or 0, tonumber(trend.top_overlap_ratio) or 0)
+  elseif trend.error then
+    lines[#lines + 1] = "  - error: " .. tostring(trend.error)
+  else
+    lines[#lines + 1] = "  - (disabled)"
+  end
+
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "module_risk:"
+  if not report.module_risk or #report.module_risk == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for i = 1, math.min(8, #report.module_risk) do
+      local item = report.module_risk[i]
+      lines[#lines + 1] = string.format(
+        "  - %s avg=%.3f total=%.3f symbols=%d",
+        tostring(item.id),
+        tonumber(item.avg_score) or 0,
+        tonumber(item.score) or 0,
+        tonumber(item.count) or 0
+      )
+    end
+  end
+
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "package_risk:"
+  if not report.package_risk or #report.package_risk == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for i = 1, math.min(8, #report.package_risk) do
+      local item = report.package_risk[i]
+      lines[#lines + 1] = string.format(
+        "  - %s avg=%.3f total=%.3f symbols=%d",
+        tostring(item.id),
+        tonumber(item.avg_score) or 0,
+        tonumber(item.score) or 0,
+        tonumber(item.count) or 0
+      )
+    end
+  end
+
+  return {
+    lines = lines,
+    line_actions = line_actions,
+    line_highlights = line_highlights,
+  }
+end
+
+function M.knowledge_graph_document(graph)
+  local counts = graph.counts or {}
+  local edge_type_counts = counts.edge_type_counts or {}
+  local edge_types = {}
+  for edge_type, count in pairs(edge_type_counts) do
+    edge_types[#edge_types + 1] = string.format("  - %s: %d", tostring(edge_type), tonumber(count) or 0)
+  end
+  table.sort(edge_types)
+
+  local lines = {
+    "code-atlas knowledge graph",
+    "",
+    string.format("schema: %s", tostring(graph.schema_version)),
+    string.format("root: %s", tostring(graph.root)),
+    string.format("generated_at: %s", tostring(graph.generated_at)),
+    string.format("nodes: %d", tonumber(counts.total_nodes) or 0),
+    string.format("edges: %d", tonumber(counts.total_edges) or 0),
+    "",
+    "node_types:",
+    string.format("  - functions: %d", tonumber(counts.function_nodes) or 0),
+    string.format("  - types: %d", tonumber(counts.type_nodes) or 0),
+    string.format("  - files: %d", tonumber(counts.file_nodes) or 0),
+    string.format("  - modules: %d", tonumber(counts.module_nodes) or 0),
+    string.format("  - packages: %d", tonumber(counts.package_nodes) or 0),
+    string.format("  - tests: %d", tonumber(counts.test_nodes) or 0),
+  }
+
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "edge_types:"
+  if #edge_types == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, line in ipairs(edge_types) do
+      lines[#lines + 1] = line
+    end
+  end
+
+  local validation = graph.validation or {}
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "validation: " .. tostring(validation.ok == true)
+  if validation.errors and #validation.errors > 0 then
+    lines[#lines + 1] = "errors:"
+    for _, err in ipairs(validation.errors) do
+      lines[#lines + 1] = "  - " .. tostring(err)
+    end
+  end
+
+  return {
+    lines = lines,
+    line_actions = {},
+  }
+end
+
+function M.architecture_graph_document(report)
+  local lines = {
+    "code-atlas architecture graph",
+    "",
+    string.format("root: %s", tostring(report.root or "")),
+    string.format("generated_at: %s", tostring(report.generated_at or "")),
+    string.format("groups: %d", #(report.group_ids or {})),
+    string.format("dependencies: %d", tonumber(report.dependency_count) or 0),
+    string.format("violations: %d", tonumber(report.violation_count) or 0),
+    string.format(
+      "severity: critical=%d high=%d medium=%d low=%d",
+      tonumber(((report.severity_counts or {}).critical) or 0),
+      tonumber(((report.severity_counts or {}).high) or 0),
+      tonumber(((report.severity_counts or {}).medium) or 0),
+      tonumber(((report.severity_counts or {}).low) or 0)
+    ),
+    string.format("include_tests: %s", tostring(((report.options or {}).include_tests) == true)),
+    string.format("unknown_layer_policy: %s", tostring((report.options or {}).unknown_layer_policy or "allow")),
+    string.format("rules_mode: %s", tostring((report.options or {}).rules_mode or "merge")),
+    "",
+    "layers:",
+  }
+  local line_actions = {}
+
+  local layer_keys = {}
+  for layer, _ in pairs(report.layer_counts or {}) do
+    layer_keys[#layer_keys + 1] = layer
+  end
+  table.sort(layer_keys)
+  if #layer_keys == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, layer in ipairs(layer_keys) do
+      lines[#lines + 1] = string.format("  - %s: %d groups", layer, tonumber((report.layer_counts or {})[layer]) or 0)
+    end
+  end
+
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "groups:"
+
+  if not report.group_ids or #report.group_ids == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, group_id in ipairs(report.group_ids) do
+      local group = (report.groups or {})[group_id]
+      if group then
+        lines[#lines + 1] = string.format("  - %s (%d symbols)", group.label, tonumber(group.symbol_count) or 0)
+        local group_line = #lines
+        local outgoing = ((report.outgoing or {})[group_id]) or {}
+        if #outgoing == 0 then
+          lines[#lines + 1] = "      -> (none)"
+        else
+          for _, target_group_id in ipairs(outgoing) do
+            local target = (report.groups or {})[target_group_id]
+            local edge_meta = ((((report.edge_counts or {})[group_id] or {})[target_group_id]) or {})
+            local edge_count = tonumber(edge_meta.count) or 0
+            lines[#lines + 1] = string.format("      -> %s (%d)", target and target.label or target_group_id, edge_count)
+          end
+        end
+        if group.target then
+          line_actions[group_line] = {
+            target = group.target,
+          }
+        end
+      end
+    end
+  end
+
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "rule_violations:"
+
+  if not report.violations or #report.violations == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, item in ipairs(report.violations) do
+      local src = (report.groups or {})[item.source_group_id]
+      local dst = (report.groups or {})[item.target_group_id]
+      lines[#lines + 1] = string.format(
+        "  - [%s:%d] %s -> %s (%d edges)",
+        tostring(item.severity or "low"),
+        tonumber(item.severity_score) or 0,
+        src and src.label or item.source_group_id,
+        dst and dst.label or item.target_group_id,
+        tonumber(item.count) or 0
+      )
+
+      local examples = item.examples or {}
+      for _, example in ipairs(examples) do
+        local source_symbol = ((report.symbols_by_id or {})[example.source_symbol_id])
+        local target_symbol = ((report.symbols_by_id or {})[example.target_symbol_id])
+        if source_symbol and target_symbol then
+          lines[#lines + 1] = string.format(
+            "      example: %s -> %s",
+            tostring(source_symbol.name),
+            tostring(target_symbol.name)
+          )
+          line_actions[#lines] = {
+            target = {
+              path = source_symbol.path,
+              row = source_symbol.range[1],
+              col = source_symbol.range[2],
+            },
+          }
+        end
+      end
+    end
+  end
+
+  return {
+    lines = lines,
+    line_actions = line_actions,
+  }
+end
+
+function M.code_evolution_document(report)
+  local lines = {
+    "code-atlas evolution graph",
+    "",
+    string.format("root: %s", tostring(report.root or "")),
+    string.format("generated_at: %s", tostring(report.generated_at or "")),
+    string.format("commits: %d", tonumber(report.commits_count) or 0),
+    string.format("insertions: %d", tonumber(((report.totals or {}).insertions) or 0)),
+    string.format("deletions: %d", tonumber(((report.totals or {}).deletions) or 0)),
+    string.format("churn: %d", tonumber(((report.totals or {}).churn) or 0)),
+    string.format("options.limit: %s", tostring(((report.options or {}).limit))),
+    string.format("options.since: %s", tostring(((report.options or {}).since) or "")),
+    string.format("options.path: %s", tostring(((report.options or {}).path) or "")),
+    "",
+    "timeline:",
+  }
+  local line_actions = {}
+
+  if not report.timeline or #report.timeline == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, item in ipairs(report.timeline) do
+      lines[#lines + 1] = string.format(
+        "  - %s %s +%d/-%d files=%d symbols=%d edges=%d %s",
+        tostring(item.date or ""),
+        tostring(item.short_hash or ""),
+        tonumber(item.insertions) or 0,
+        tonumber(item.deletions) or 0,
+        tonumber(item.files_count) or 0,
+        tonumber(item.touched_symbols) or 0,
+        tonumber(item.touched_edges) or 0,
+        tostring(item.subject or "")
+      )
+    end
+  end
+
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "hotspots_files:"
+  if not report.hotspots or not report.hotspots.files or #report.hotspots.files == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, item in ipairs(report.hotspots.files) do
+      lines[#lines + 1] = string.format(
+        "  - %s churn=%d touches=%d",
+        tostring(item.path),
+        tonumber(item.churn) or 0,
+        tonumber(item.touches) or 0
+      )
+      line_actions[#lines] = {
+        target = {
+          path = vim.fs.joinpath(report.root, tostring(item.path)),
+          row = 0,
+          col = 0,
+        },
+      }
+    end
+  end
+
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "hotspots_symbols:"
+  if not report.hotspots or not report.hotspots.symbols or #report.hotspots.symbols == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, item in ipairs(report.hotspots.symbols) do
+      lines[#lines + 1] = string.format(
+        "  - %s - %s touches=%d churn=%d",
+        tostring(item.name),
+        tostring(item.relpath or item.path),
+        tonumber(item.touches) or 0,
+        tonumber(item.churn) or 0
+      )
+      line_actions[#lines] = {
+        target = {
+          path = item.path,
+          row = item.range[1],
+          col = item.range[2],
+        },
+      }
     end
   end
 
