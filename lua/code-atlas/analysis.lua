@@ -871,6 +871,311 @@ function M.write_evolution_report(path, report, opts)
   }, nil
 end
 
+local function degree_maps(index)
+  local in_degree = {}
+  local out_degree = {}
+  for _, symbol in ipairs(index.symbols or {}) do
+    in_degree[symbol.id] = #((index.incoming or {})[symbol.id] or {})
+    out_degree[symbol.id] = #((index.outgoing or {})[symbol.id] or {})
+  end
+  return in_degree, out_degree
+end
+
+local function file_churn_map(root, opts)
+  if not to_bool(opts.include_churn, true) then
+    return {}, {
+      enabled = false,
+      commits = 0,
+      files = 0,
+      total_churn = 0,
+    }
+  end
+
+  local git_ok, git = pcall(require, "code-atlas.git")
+  if not git_ok or not git then
+    return {}, {
+      enabled = false,
+      commits = 0,
+      files = 0,
+      total_churn = 0,
+      error = "git module unavailable",
+    }
+  end
+
+  local repo_root, root_err = git.repo_root(root or vim.fn.getcwd())
+  if not repo_root then
+    return {}, {
+      enabled = false,
+      commits = 0,
+      files = 0,
+      total_churn = 0,
+      error = root_err,
+    }
+  end
+
+  local commits, history_err = git.history_with_stats(repo_root, {
+    limit = math.max(1, math.floor(tonumber(opts.churn_limit) or 60)),
+    include_merges = false,
+    since = opts.churn_since,
+    timeout_ms = opts.churn_timeout_ms,
+  })
+  if not commits then
+    return {}, {
+      enabled = false,
+      commits = 0,
+      files = 0,
+      total_churn = 0,
+      error = history_err,
+    }
+  end
+
+  local churn_by_path = {}
+  local total = 0
+  for _, commit in ipairs(commits or {}) do
+    for _, file in ipairs(commit.files or {}) do
+      local rel = tostring(file.path)
+      local churn = (tonumber(file.added) or 0) + (tonumber(file.deleted) or 0)
+      churn_by_path[rel] = (churn_by_path[rel] or 0) + churn
+      total = total + churn
+    end
+  end
+
+  local files = 0
+  for _, _ in pairs(churn_by_path) do
+    files = files + 1
+  end
+
+  return churn_by_path, {
+    enabled = true,
+    commits = #commits,
+    files = files,
+    total_churn = total,
+  }
+end
+
+local function bounded_reach_count(edges, root_id, max_depth)
+  local seen = {}
+  local queue = {
+    { id = root_id, depth = 0 },
+  }
+  seen[root_id] = true
+  local count = 0
+
+  while #queue > 0 do
+    local current = table.remove(queue, 1)
+    if current.depth < max_depth then
+      for _, next_id in ipairs((edges or {})[current.id] or {}) do
+        if not seen[next_id] then
+          seen[next_id] = true
+          count = count + 1
+          queue[#queue + 1] = {
+            id = next_id,
+            depth = current.depth + 1,
+          }
+        end
+      end
+    end
+  end
+
+  return count
+end
+
+local function build_hot_path(index, scores, root_id, opts)
+  local edges = opts.direction == "incoming" and (index.incoming or {}) or (index.outgoing or {})
+  local path = {}
+  local visited = {}
+  local current = root_id
+  local min_score = math.huge
+
+  for _ = 1, math.max(1, tonumber(opts.path_depth) or 5) do
+    if visited[current] then
+      break
+    end
+    visited[current] = true
+    path[#path + 1] = current
+    min_score = math.min(min_score, tonumber((scores[current] or {}).score) or 0)
+
+    local next_id = nil
+    local next_score = -math.huge
+    for _, candidate in ipairs(edges[current] or {}) do
+      if not visited[candidate] then
+        local score = tonumber((scores[candidate] or {}).score) or 0
+        if score > next_score then
+          next_score = score
+          next_id = candidate
+        end
+      end
+    end
+    if not next_id then
+      break
+    end
+    current = next_id
+  end
+
+  return {
+    ids = path,
+    bottleneck_score = min_score == math.huge and 0 or min_score,
+  }
+end
+
+function M.hot_path_report(index, opts)
+  if not index then
+    return nil, "project index unavailable"
+  end
+
+  opts = vim.tbl_deep_extend("force", {
+    top_n = 10,
+    max_depth = 4,
+    path_depth = 5,
+    path_count = 5,
+    direction = "outgoing",
+    include_tests = false,
+    weight_in = 2.2,
+    weight_out = 1.6,
+    weight_balance = 2.4,
+    weight_reach = 1.1,
+    include_churn = true,
+    churn_limit = 60,
+    churn_since = nil,
+    churn_timeout_ms = 5000,
+    weight_churn = 0.15,
+  }, opts or {})
+
+  local in_degree, out_degree = degree_maps(index)
+  local churn_by_path, churn_meta = file_churn_map(index.root, opts)
+  local scores = {}
+
+  for _, symbol in ipairs(index.symbols or {}) do
+    if opts.include_tests or not is_test_symbol(symbol) then
+      local in_d = tonumber(in_degree[symbol.id]) or 0
+      local out_d = tonumber(out_degree[symbol.id]) or 0
+      local balance = math.min(in_d, out_d)
+      local out_reach = bounded_reach_count(index.outgoing, symbol.id, tonumber(opts.max_depth) or 4)
+      local in_reach = bounded_reach_count(index.incoming, symbol.id, tonumber(opts.max_depth) or 4)
+      local reach = out_reach + in_reach
+      local churn = tonumber(churn_by_path[symbol.relpath or symbol.path]) or 0
+
+      local score = (in_d * opts.weight_in)
+        + (out_d * opts.weight_out)
+        + (balance * opts.weight_balance)
+        + (reach * opts.weight_reach)
+        + (churn * opts.weight_churn)
+
+      scores[symbol.id] = {
+        symbol = symbol,
+        in_degree = in_d,
+        out_degree = out_d,
+        balance = balance,
+        out_reach = out_reach,
+        in_reach = in_reach,
+        reach = reach,
+        churn = churn,
+        score = score,
+      }
+    end
+  end
+
+  local ranked = {}
+  for _, item in pairs(scores) do
+    ranked[#ranked + 1] = item
+  end
+  table.sort(ranked, function(a, b)
+    if a.score == b.score then
+      if a.reach == b.reach then
+        return symbol_label(a.symbol) < symbol_label(b.symbol)
+      end
+      return a.reach > b.reach
+    end
+    return a.score > b.score
+  end)
+
+  local top_n = math.max(1, tonumber(opts.top_n) or 10)
+  local hotspots = {}
+  for i = 1, math.min(top_n, #ranked) do
+    local item = ranked[i]
+    hotspots[#hotspots + 1] = {
+      rank = i,
+      symbol = item.symbol,
+      score = item.score,
+      in_degree = item.in_degree,
+      out_degree = item.out_degree,
+      balance = item.balance,
+      reach = item.reach,
+      out_reach = item.out_reach,
+      in_reach = item.in_reach,
+      churn = item.churn,
+      rationale = string.format(
+        "fan-in=%d fan-out=%d reach=%d balance=%d churn=%d",
+        item.in_degree,
+        item.out_degree,
+        item.reach,
+        item.balance,
+        item.churn
+      ),
+    }
+  end
+
+  local hot_paths = {}
+  local path_count = math.max(1, tonumber(opts.path_count) or 5)
+  for i = 1, math.min(path_count, #hotspots) do
+    local start = hotspots[i]
+    local chain = build_hot_path(index, scores, start.symbol.id, opts)
+    local nodes = {}
+    for _, symbol_id in ipairs(chain.ids or {}) do
+      local item = scores[symbol_id]
+      if item then
+        nodes[#nodes + 1] = {
+          id = symbol_id,
+          name = item.symbol.name,
+          path = item.symbol.path,
+          relpath = item.symbol.relpath,
+          range = item.symbol.range,
+          score = item.score,
+        }
+      end
+    end
+    hot_paths[#hot_paths + 1] = {
+      root_symbol_id = start.symbol.id,
+      root_score = start.score,
+      bottleneck_score = chain.bottleneck_score,
+      nodes = nodes,
+    }
+  end
+
+  return {
+    generated_at = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+    root = index.root,
+    total_symbols = #(index.symbols or {}),
+    analyzed_symbols = #ranked,
+    direction = opts.direction,
+    hotspots = hotspots,
+    hot_paths = hot_paths,
+    options = {
+      top_n = top_n,
+      max_depth = opts.max_depth,
+      path_depth = opts.path_depth,
+      path_count = path_count,
+      include_tests = to_bool(opts.include_tests, false),
+      direction = opts.direction,
+      churn = {
+        include = to_bool(opts.include_churn, true),
+        limit = opts.churn_limit,
+        since = opts.churn_since,
+        timeout_ms = opts.churn_timeout_ms,
+        weight = opts.weight_churn,
+      },
+      weights = {
+        in_degree = opts.weight_in,
+        out_degree = opts.weight_out,
+        balance = opts.weight_balance,
+        reach = opts.weight_reach,
+        churn = opts.weight_churn,
+      },
+    },
+    churn = churn_meta,
+  }, nil
+end
+
 function M.impact_for_symbol(index, root_symbol_id, opts)
   if not index then
     return nil, "project index unavailable"

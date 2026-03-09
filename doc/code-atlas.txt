@@ -134,6 +134,19 @@ Example using Lua setup:
     Open interactive graph viewer with focus, filter, search, and
     zoom/pan-style navigation shortcuts.
 
+- :CodeAtlasHotPath [incoming|outgoing]
+                    [top=N]
+                    [max_depth=N]
+                    [path_depth=N]
+                    [path_count=N]
+                    [include_tests=bool]
+                    [include_churn=bool]
+                    [churn_limit=N]
+                    [churn_since=...]
+                    [churn_weight=N]
+    Rank hotspot symbols and critical call chains using degree and
+    bounded-reach centrality heuristics.
+
 - :CodeAtlasUI tree|ascii
     Switch graph UI mode.
 
@@ -212,6 +225,23 @@ Default configuration:
       filter_path_prefix = nil,
       search_query = nil,
     },
+    hot_path = {
+      top_n = 10,
+      max_depth = 4,
+      path_depth = 5,
+      path_count = 5,
+      include_tests = false,
+      include_churn = true,
+      churn_limit = 60,
+      churn_since = nil,
+      churn_timeout_ms = 5000,
+      direction = "outgoing",
+      weight_in = 2.2,
+      weight_out = 1.6,
+      weight_balance = 2.4,
+      weight_reach = 1.1,
+      weight_churn = 0.15,
+    },
   }
 <
 
@@ -260,6 +290,21 @@ Fields:
   viewer.node_kind  Node kind filter: all/function/method.
   viewer.filter_path_prefix  Optional path-prefix filter.
   viewer.search_query  Optional initial search query.
+  hot_path.top_n  Number of ranked hotspot symbols.
+  hot_path.max_depth  Depth bound for transitive reach score.
+  hot_path.path_depth  Maximum length of each reported hot chain.
+  hot_path.path_count  Number of reported hot chains.
+  hot_path.include_tests  Include test symbols in ranking.
+  hot_path.include_churn  Include git churn into risk score.
+  hot_path.churn_limit  Number of recent commits for churn aggregation.
+  hot_path.churn_since  Optional git since-window for churn aggregation.
+  hot_path.churn_timeout_ms  Timeout for churn git history query.
+  hot_path.direction  Chain traversal direction (incoming/outgoing).
+  hot_path.weight_in  Weight for fan-in contribution.
+  hot_path.weight_out  Weight for fan-out contribution.
+  hot_path.weight_balance  Weight for bridge-like balance term.
+  hot_path.weight_reach  Weight for bounded transitive reach.
+  hot_path.weight_churn  Weight for git churn contribution.
 
 ==============================================================================
 6. Limitations                                                *code-atlas-limitations*
@@ -275,6 +320,7 @@ Fields:
 - Violation severity is heuristic and should be calibrated per project.
 - Evolution hotspots are heuristic and based on git churn + current index mapping.
 - Interactive viewer pan/zoom model is terminal-oriented and intentionally lightweight.
+- Hot path ranking is heuristic; churn weighting depends on available git history.
 
 ==============================================================================
 vim:tw=78:ts=8:ft=help:norl:
