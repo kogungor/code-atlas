@@ -67,6 +67,7 @@ Local development with `lazy.nvim`:
 - `:CodeAtlasArchitecture [include_tests=bool] [unknown_policy=allow|deny] [max_examples=N] [path=...] [format=json] [pretty=bool]` build architecture layer/domain report, dependency-rule violations, and optional JSON snapshot
 - `:CodeAtlasEvolution [limit=N] [hotspot_limit=N] [include_merges=bool] [since=...] [path=...] [out=...] [format=json|jsonl] [pretty=bool] [timeout_ms=N]` build git-based code evolution timeline and churn hotspots with optional snapshot export
 - `:CodeAtlasViewer [incoming|outgoing] [depth=N] [dynamic_only=bool] [kind=all|function|method] [filter=path_prefix] [search=query]` open advanced interactive project graph viewer
+- `:CodeAtlasHotPath [incoming|outgoing] [top=N] [max_depth=N] [path_depth=N] [path_count=N] [include_tests=bool] [include_churn=bool] [churn_limit=N] [churn_since=...] [churn_weight=N]` rank central functions and critical call chains with optional git-churn weighting
 - `:CodeAtlasUI tree|ascii` switch UI mode
 
 ## Main Configuration
@@ -128,6 +129,23 @@ require("code-atlas").setup({
     filter_path_prefix = nil,
     search_query = nil,
   },
+  hot_path = {
+    top_n = 10,
+    max_depth = 4,
+    path_depth = 5,
+    path_count = 5,
+    include_tests = false,
+    include_churn = true,
+    churn_limit = 60,
+    churn_since = nil,
+    churn_timeout_ms = 5000,
+    direction = "outgoing",
+    weight_in = 2.2,
+    weight_out = 1.6,
+    weight_balance = 2.4,
+    weight_reach = 1.1,
+    weight_churn = 0.15,
+  },
 })
 ```
 
@@ -145,6 +163,7 @@ require("code-atlas").setup({
 - Layer/domain inference is heuristic by default, but can be overridden via `architecture.*_prefix` and `architecture.*_top_dir`
 - Evolution report uses git churn heuristics and current index mapping for symbol/edge touch estimation
 - Interactive viewer adds focus/filter/search, node-kind filtering, search highlighting, and zoom/pan-style navigation over project graph data
+- Hot path detection combines centrality/reach with optional git churn weighting to rank risk-heavy critical chains
 - Language coverage is best-effort and parser/query dependent
 - Large projects may need further performance guardrails/caching improvements
 

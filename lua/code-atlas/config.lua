@@ -69,6 +69,23 @@ M.defaults = {
     filter_path_prefix = nil,
     search_query = nil,
   },
+  hot_path = {
+    top_n = 10,
+    max_depth = 4,
+    path_depth = 5,
+    path_count = 5,
+    include_tests = false,
+    include_churn = true,
+    churn_limit = 60,
+    churn_since = nil,
+    churn_timeout_ms = 5000,
+    direction = "outgoing",
+    weight_in = 2.2,
+    weight_out = 1.6,
+    weight_balance = 2.4,
+    weight_reach = 1.1,
+    weight_churn = 0.15,
+  },
 }
 
 M.options = vim.deepcopy(M.defaults)

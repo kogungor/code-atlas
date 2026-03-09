@@ -819,6 +819,87 @@ function M.impact_document(report)
   }
 end
 
+function M.hot_path_document(report)
+  local lines = {
+    "code-atlas hot path detection",
+    "",
+    string.format("root: %s", tostring(report.root or "")),
+    string.format("generated_at: %s", tostring(report.generated_at or "")),
+    string.format("direction: %s", tostring(report.direction or "outgoing")),
+    string.format("total_symbols: %d", tonumber(report.total_symbols) or 0),
+    string.format("analyzed_symbols: %d", tonumber(report.analyzed_symbols) or 0),
+    string.format(
+      "churn: enabled=%s commits=%d files=%d total=%d",
+      tostring(((report.churn or {}).enabled) == true),
+      tonumber(((report.churn or {}).commits) or 0),
+      tonumber(((report.churn or {}).files) or 0),
+      tonumber(((report.churn or {}).total_churn) or 0)
+    ),
+    "",
+    "hotspots:",
+  }
+  local line_actions = {}
+
+  if not report.hotspots or #report.hotspots == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, item in ipairs(report.hotspots) do
+      local symbol = item.symbol
+      lines[#lines + 1] = string.format(
+        "  - #%d %.2f %s - %s",
+        tonumber(item.rank) or 0,
+        tonumber(item.score) or 0,
+        tostring(symbol and symbol.name or ""),
+        tostring(symbol and (symbol.relpath or symbol.path) or "")
+      )
+      line_actions[#lines] = {
+        target = {
+          path = symbol.path,
+          row = symbol.range[1],
+          col = symbol.range[2],
+        },
+      }
+      lines[#lines + 1] = string.format(
+        "      rationale: fan-in=%d fan-out=%d reach=%d balance=%d churn=%d",
+        tonumber(item.in_degree) or 0,
+        tonumber(item.out_degree) or 0,
+        tonumber(item.reach) or 0,
+        tonumber(item.balance) or 0,
+        tonumber(item.churn) or 0
+      )
+    end
+  end
+
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "hot_paths:"
+  if not report.hot_paths or #report.hot_paths == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, path_item in ipairs(report.hot_paths) do
+      lines[#lines + 1] = string.format(
+        "  - root_score=%.2f bottleneck=%.2f length=%d",
+        tonumber(path_item.root_score) or 0,
+        tonumber(path_item.bottleneck_score) or 0,
+        #(path_item.nodes or {})
+      )
+      for idx, node in ipairs(path_item.nodes or {}) do
+        lines[#lines + 1] = string.format(
+          "      %d. %.2f %s - %s",
+          idx,
+          tonumber(node.score) or 0,
+          tostring(node.name),
+          tostring(node.relpath or node.path)
+        )
+      end
+    end
+  end
+
+  return {
+    lines = lines,
+    line_actions = line_actions,
+  }
+end
+
 function M.knowledge_graph_document(graph)
   local counts = graph.counts or {}
   local edge_type_counts = counts.edge_type_counts or {}

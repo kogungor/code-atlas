@@ -721,6 +721,144 @@ function M.run_impact_analysis()
   })
 end
 
+local function parse_hot_path_args(raw_args)
+  local function parse_hot_bool(value)
+    local text = tostring(value):lower()
+    if text == "1" or text == "true" or text == "yes" or text == "on" then
+      return true
+    end
+    if text == "0" or text == "false" or text == "no" or text == "off" then
+      return false
+    end
+    return nil
+  end
+
+  local out = {
+    top_n = nil,
+    max_depth = nil,
+    path_depth = nil,
+    path_count = nil,
+    include_tests = nil,
+    include_churn = nil,
+    churn_limit = nil,
+    churn_since = nil,
+    churn_weight = nil,
+    direction = nil,
+  }
+
+  for _, token in ipairs(raw_args or {}) do
+    local key, value = token:match("^([%w_]+)=(.+)$")
+    if key then
+      key = key:lower()
+      if key == "top" or key == "top_n" then
+        local n = tonumber(value)
+        if not n or n < 1 then
+          return nil, "top_n must be a positive number"
+        end
+        out.top_n = math.floor(n)
+      elseif key == "max_depth" then
+        local n = tonumber(value)
+        if not n or n < 1 then
+          return nil, "max_depth must be a positive number"
+        end
+        out.max_depth = math.floor(n)
+      elseif key == "path_depth" then
+        local n = tonumber(value)
+        if not n or n < 1 then
+          return nil, "path_depth must be a positive number"
+        end
+        out.path_depth = math.floor(n)
+      elseif key == "path_count" then
+        local n = tonumber(value)
+        if not n or n < 1 then
+          return nil, "path_count must be a positive number"
+        end
+        out.path_count = math.floor(n)
+      elseif key == "include_tests" then
+        local parsed = parse_hot_bool(value)
+        if parsed == nil then
+          return nil, "include_tests must be true/false"
+        end
+        out.include_tests = parsed
+      elseif key == "include_churn" then
+        local parsed = parse_hot_bool(value)
+        if parsed == nil then
+          return nil, "include_churn must be true/false"
+        end
+        out.include_churn = parsed
+      elseif key == "churn_limit" then
+        local n = tonumber(value)
+        if not n or n < 1 then
+          return nil, "churn_limit must be a positive number"
+        end
+        out.churn_limit = math.floor(n)
+      elseif key == "churn_since" then
+        out.churn_since = value
+      elseif key == "churn_weight" then
+        local n = tonumber(value)
+        if not n or n < 0 then
+          return nil, "churn_weight must be a non-negative number"
+        end
+        out.churn_weight = n
+      elseif key == "direction" then
+        value = tostring(value):lower()
+        if value ~= "incoming" and value ~= "outgoing" then
+          return nil, "direction must be incoming or outgoing"
+        end
+        out.direction = value
+      else
+        return nil, "unknown option: " .. tostring(key)
+      end
+    elseif token == "incoming" or token == "outgoing" then
+      out.direction = token
+    else
+      return nil, "unexpected argument: " .. tostring(token)
+    end
+  end
+
+  return out, nil
+end
+
+function M.run_hot_path_detection(opts)
+  opts = opts or {}
+  local index_mod = require("code-atlas.index")
+  local analysis = require("code-atlas.analysis")
+  local render = require("code-atlas.render")
+  local window = require("code-atlas.window")
+  local config = require("code-atlas.config").get()
+
+  opts = vim.tbl_deep_extend("force", vim.deepcopy(config.hot_path or {}), opts)
+
+  local index = index_mod.get()
+  if not index then
+    index = M.build_project_index({ root = vim.fn.getcwd() })
+  end
+
+  if not index then
+    vim.notify("code-atlas: project index is unavailable", vim.log.levels.ERROR)
+    return nil, "project index unavailable"
+  end
+
+  local report, err = analysis.hot_path_report(index, opts)
+  if not report then
+    vim.notify("code-atlas: hot path detection failed: " .. tostring(err), vim.log.levels.ERROR)
+    return nil, err
+  end
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  local source_win = vim.api.nvim_get_current_win()
+  local doc = render.hot_path_document(report)
+
+  window.open(doc.lines, {
+    title = " code-atlas hot path ",
+    source_win = source_win,
+    source_buf = bufnr,
+    line_actions = doc.line_actions,
+  })
+
+  return report, nil
+end
+
 local function parse_export_args(raw_args)
   local out = {
     format = nil,
@@ -1561,6 +1699,35 @@ function M.create_user_commands()
     M.run_impact_analysis()
   end, {
     desc = "Analyze impact if current function changes or is removed",
+  })
+
+  vim.api.nvim_create_user_command("CodeAtlasHotPath", function(args)
+    local parsed, parse_err = parse_hot_path_args(args.fargs)
+    if not parsed then
+      vim.notify("code-atlas: hot path args invalid: " .. tostring(parse_err), vim.log.levels.ERROR)
+      return
+    end
+    M.run_hot_path_detection(parsed)
+  end, {
+    nargs = "*",
+    complete = function()
+      return {
+        "outgoing",
+        "incoming",
+        "top=10",
+        "max_depth=4",
+        "path_depth=5",
+        "path_count=5",
+        "include_tests=false",
+        "include_tests=true",
+        "include_churn=true",
+        "include_churn=false",
+        "churn_limit=60",
+        "churn_since=30 days ago",
+        "churn_weight=0.15",
+      }
+    end,
+    desc = "Rank critical functions and call paths using graph centrality heuristics",
   })
 
   vim.api.nvim_create_user_command("CodeAtlasExport", function(args)
